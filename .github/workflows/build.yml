@@ -1,0 +1,92 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.50.0
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run the tests
+        run: flutter test
+
+      - name: Read the version
+        id: ver
+        shell: pwsh
+        run: |
+          $line = Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9]+\.[0-9]+\.[0-9]+)' | Select-Object -First 1
+          $v = $line.Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v"
+
+      - name: Build
+        run: flutter build windows --release --dart-define=SHIORI_VERSION=${{ steps.ver.outputs.version }}
+
+      - name: Bundle 7-Zip (for CBR files)
+        shell: pwsh
+        run: |
+          $src = "C:\Program Files\7-Zip"
+          $dst = "build\windows\x64\runner\Release\tools"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Copy-Item "$src\7z.exe", "$src\7z.dll" $dst
+          Copy-Item "$src\License.txt" "$dst\7-Zip-License.txt"
+          Copy-Item "assets\fonts\Inter-OFL.txt", "assets\fonts\JetBrainsMono-OFL.txt" $dst
+
+      - name: Self-test the packaged app
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "shiori-root"
+          $data = Join-Path $env:RUNNER_TEMP "shiori-data"
+          New-Item -ItemType Directory -Force -Path $root, $data | Out-Null
+          $env:SHIORI_ROOT = $root
+          $env:SHIORI_DATA = $data
+          $p = Start-Process -FilePath "build\windows\x64\runner\Release\Shiori.exe" -ArgumentList "--selftest" -PassThru
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); Write-Host "Self-test timed out"; exit 1 }
+          $report = Join-Path $data "logs\selftest.txt"
+          if (Test-Path $report) { Get-Content $report } else { Write-Host "No self-test report"; Get-ChildItem -Recurse $data | Format-Table FullName; exit 1 }
+          Get-ChildItem (Join-Path $data "logs") -Filter "selftest-*.png" | ForEach-Object { Write-Host "Screenshot: $($_.Name) $($_.Length) bytes" }
+          if ($p.ExitCode -ne 0) { Write-Host "Self-test failed (exit $($p.ExitCode))"; exit 1 }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $pkg = "package\Shiori\App"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item -Recurse "build\windows\x64\runner\Release\*" $pkg
+          Compress-Archive -Path "package\Shiori" -DestinationPath "Shiori-v$v-windows.zip" -CompressionLevel Optimal
+          Get-Item "Shiori-v$v-windows.zip" | Format-Table Name, Length
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = "v${{ steps.ver.outputs.version }}"
+          gh release view $v 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $v already exists. Raise the version in pubspec.yaml to publish a new one."
+            exit 0
+          }
+          gh release create $v "Shiori-${v}-windows.zip" --title "Shiori $v" --notes-file RELEASE_NOTES.md --target $env:GITHUB_SHA
