@@ -17,6 +17,7 @@ import '../core/log.dart';
 import '../core/paths.dart';
 import '../core/savepage.dart';
 import '../core/settings.dart';
+import 'covers.dart';
 import 'library_page.dart';
 import 'widgets.dart';
 
@@ -91,6 +92,36 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
 
   // UI
   bool ui_ = false;
+  bool _overControls = false;
+  bool _cursorHidden = false;
+  Timer? _hideTimer;
+
+  /// Moving the mouse shows the controls; they hide again after 2.5 s of
+  /// stillness, unless the pointer is over them.
+  void _mouseMoved() {
+    _input();
+    if (!ui_ || _cursorHidden) setState(() {
+      ui_ = true;
+      _cursorHidden = false;
+    });
+    _armHide();
+  }
+
+  void _armHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(milliseconds: 2500), () {
+      if (!mounted || _overControls || showStrip) return;
+      setState(() {
+        ui_ = false;
+        _cursorHidden = true;
+      });
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => ui_ = !ui_);
+    if (ui_) _armHide();
+  }
   bool showStrip = false;
   double zoom = 1;
   Offset pan = Offset.zero;
@@ -153,6 +184,7 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
 
   @override
   void dispose() {
+    _hideTimer?.cancel();
     if (ReaderControl.active == this) ReaderControl.active = null;
     _endSession();
     _tick?.cancel();
@@ -769,7 +801,9 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
       rtl ? prev() : next();
     } else if (k == LogicalKeyboardKey.arrowLeft) {
       rtl ? next() : prev();
-    } else if (k == LogicalKeyboardKey.pageDown || k == LogicalKeyboardKey.space) {
+    } else if (k == LogicalKeyboardKey.space) {
+      _toggleControls();
+    } else if (k == LogicalKeyboardKey.pageDown) {
       next();
     } else if (k == LogicalKeyboardKey.pageUp) {
       prev();
@@ -811,7 +845,7 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
     } else if (k == LogicalKeyboardKey.keyF || k == LogicalKeyboardKey.f11) {
       _toggleFullScreen();
     } else if (k == LogicalKeyboardKey.keyH) {
-      setState(() => ui_ = !ui_);
+      _toggleControls();
     } else {
       return KeyEventResult.ignored;
     }
@@ -908,7 +942,14 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
+    return Listener(
+      onPointerDown: (e) {
+        if (e.buttons & kBackMouseButton != 0) _close();
+      },
+      child: MouseRegion(
+      cursor: _cursorHidden ? SystemMouseCursors.none : MouseCursor.defer,
+      onHover: (_) => _mouseMoved(),
+      child: Focus(
       focusNode: focus,
       autofocus: true,
       onKeyEvent: _onKey,
@@ -927,10 +968,12 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
             Positioned.fill(child: _content()),
             if (Settings.I.pageNumbers && n > 0 && !ui_) Positioned(right: 14, bottom: 10, child: _pageNumber()),
             if (ui_) ..._overlay(),
-            if (showStrip) Positioned(left: 0, right: 0, bottom: ui_ ? 64 : 0, child: _pageStrip()),
+            if (showStrip) Positioned(left: 0, right: 0, bottom: ui_ ? 64 : 0, child: _hoverKeep(_pageStrip())),
             const ToastLayer(),
           ]);
         }),
+      ),
+      ),
       ),
     );
   }
@@ -1014,7 +1057,7 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
     _input();
     final x = at.dx / viewport.width;
     if (x > 0.35 && x < 0.65) {
-      setState(() => ui_ = !ui_);
+      _toggleControls();
       return;
     }
     final leftSide = x <= 0.35;
@@ -1044,7 +1087,7 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
         child: GestureDetector(
           onTapUp: (d) {
             final x = d.localPosition.dx / viewport.width;
-            if (x > 0.3 && x < 0.7) setState(() => ui_ = !ui_);
+            if (x > 0.3 && x < 0.7) _toggleControls();
           },
           child: ListView.builder(
             controller: vScroll,
@@ -1112,7 +1155,7 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
               Text('Next', style: ts(c: tk.faint, size: 12)),
               const SizedBox(height: 4),
               Row(children: [
-                SizedBox(width: 44, height: 62, child: ClipRRect(borderRadius: BorderRadius.circular(4), child: CoverThumb(title: nt, width: 44))),
+                SizedBox(width: 44, height: 62, child: ClipRRect(borderRadius: BorderRadius.circular(4), child: CoverThumb(title: nt))),
                 const SizedBox(width: 10),
                 Expanded(child: Text(nt.displayTitle, style: ts(w: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis)),
               ]),
@@ -1132,10 +1175,27 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
     );
   }
 
+  /// While the pointer is over a control bar, the controls stay up.
+  Widget _hoverKeep(Widget child) => MouseRegion(
+        onEnter: (_) => _overControls = true,
+        onExit: (_) {
+          _overControls = false;
+          _armHide();
+        },
+        child: child,
+      );
+
   List<Widget> _overlay() {
     final pagesNow = stripMode ? [anchorPage] : (pos < views.length ? views[pos].pages.toList() : [max(0, n - 1)]);
     final cur = pagesNow.isEmpty ? 0 : pagesNow.reduce(min);
     final loaded = bytes.length + failed.length;
+    return [
+      for (final w in _overlayBars(cur, loaded))
+        Positioned(left: w.left, right: w.right, top: w.top, bottom: w.bottom, child: _hoverKeep(w.child)),
+    ];
+  }
+
+  List<Positioned> _overlayBars(int cur, int loaded) {
     return [
       Positioned(
         left: 0,

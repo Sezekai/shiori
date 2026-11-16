@@ -7,6 +7,7 @@ import '../core/db.dart';
 import '../core/jobs.dart';
 import '../core/library.dart';
 import 'app.dart';
+import 'covers.dart';
 import 'library_page.dart';
 import 'widgets.dart';
 
@@ -59,7 +60,7 @@ class _TitlePageState extends State<TitlePage> {
                     child: Column(children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(lk.rPanel),
-                        child: AspectRatio(aspectRatio: 1 / 1.42, child: CoverThumb(title: widget.entry.cover, width: 280, fit: BoxFit.contain)),
+                        child: AspectRatio(aspectRatio: 1 / 1.42, child: CoverThumb(title: widget.entry.cover)),
                       ),
                       const SizedBox(height: 10),
                       SizedBox(
@@ -342,12 +343,13 @@ class _TitlePageState extends State<TitlePage> {
                       setState(() => ticked.addAll(list.sublist(a, b + 1).map((x) => x.id)));
                     } else if (HardwareKeyboard.instance.isControlPressed) {
                       setState(() => isTicked ? ticked.remove(t.id) : ticked.add(t.id));
+                    } else if (current.id == t.id) {
+                      _read(t); // clicking the selected chapter again opens it
                     } else {
                       setState(() => current = t);
                     }
                     lastTick = i;
                   },
-                  onDoubleTap: () => _read(t),
                   onSecondaryTapDown: (d) => _menu(t, d.globalPosition),
                   child: Container(
                     height: lk.hRow + 20,

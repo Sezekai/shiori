@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/gestures.dart';
@@ -14,6 +13,8 @@ import '../core/library.dart';
 import '../core/settings.dart';
 import '../core/yacreader.dart';
 import 'app.dart';
+import 'covers.dart';
+import 'info_panel.dart';
 import 'filters_panel.dart';
 import 'tags_view.dart';
 import 'title_page.dart';
@@ -35,22 +36,59 @@ class LibraryPageState extends State<LibraryPage> {
 
   LibTab tab = LibTab.library;
   String folder = '';
-  Entry? open;
+  Entry? open; // the full title page
+  Entry? selected; // shown in the side panel
   final Set<int> ticked = {};
   int? lastTickIndex;
   late final TextEditingController search = TextEditingController(text: f.search);
   final ScrollController scroll = ScrollController();
   final FocusNode _keys = FocusNode(debugLabel: 'library');
   List<Entry> _entries = [];
+  String _entriesKey = '';
+
+  /// For the self-test.
+  static LibraryPageState? active;
+  void selectFirst() {
+    if (_entries.isNotEmpty) setState(() => selected = _entries.first);
+  }
 
   @override
   void initState() {
     super.initState();
+    active = this;
+    Nav.I.addBack(_back);
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeOfferYac());
+  }
+
+  /// Mouse back: full page → side panel → ticks → up a folder.
+  bool _back() {
+    if (!mounted || Nav.I.page != PageId.library) return false;
+    if (open != null) {
+      setState(() => open = null);
+      return true;
+    }
+    if (selected != null) {
+      setState(() => selected = null);
+      return true;
+    }
+    if (ticked.isNotEmpty) {
+      setState(ticked.clear);
+      return true;
+    }
+    if (tab != LibTab.library) {
+      setState(() => tab = LibTab.library);
+      return true;
+    }
+    if (folder.isNotEmpty) {
+      setState(() => folder = p.dirname(folder) == '.' ? '' : p.dirname(folder));
+      return true;
+    }
+    return false;
   }
 
   @override
   void dispose() {
+    Nav.I.removeBack(_back);
     search.dispose();
     scroll.dispose();
     _keys.dispose();
@@ -95,20 +133,39 @@ class LibraryPageState extends State<LibraryPage> {
             }),
           );
         }
+        final sel = _currentSelection();
         return Focus(
           focusNode: _keys,
           onKeyEvent: _onKey,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              if (!Nav.I.panelsHidden) _header(),
-              if (!Nav.I.panelsHidden) const SizedBox(height: 8),
-              if (!Nav.I.panelsHidden) _toolbar(),
-              ..._banners(),
-              const SizedBox(height: 8),
-              Expanded(child: _body()),
-            ]),
-          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  if (!Nav.I.panelsHidden) _header(),
+                  if (!Nav.I.panelsHidden) const SizedBox(height: 8),
+                  if (!Nav.I.panelsHidden) _toolbar(),
+                  ..._banners(),
+                  const SizedBox(height: 8),
+                  Expanded(child: _body()),
+                ]),
+              ),
+            ),
+            if (sel != null && !Nav.I.panelsHidden)
+              InfoPanel(
+                key: ValueKey(sel.id),
+                entry: sel,
+                onClose: () => setState(() => selected = null),
+                onExpand: () => setState(() => open = sel),
+                onRead: (t, page) => openReader(context, t, context_: _readingQueueFrom(sel, t), startPage: page),
+                onOpenArtist: (a) => setState(() {
+                  selected = null;
+                  tab = LibTab.library;
+                  f.artists = {a};
+                  f.excludeArtists.remove(a);
+                }),
+              ),
+          ]),
         );
       },
     );
@@ -276,6 +333,35 @@ class LibraryPageState extends State<LibraryPage> {
             Settings.I.save();
           }),
           const SizedBox(width: 8),
+          if (!ss.listView) ...[
+            Seg<bool>(
+              value: ss.coverFill,
+              items: const [(true, 'Fill'), (false, 'Fit')],
+              onChanged: (v) {
+                ss.coverFill = v;
+                Settings.I.save();
+              },
+            ),
+            Tooltip(
+              message: 'Rounded corners on covers',
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.rounded_corner, size: 16, color: tk.sec),
+                SizedBox(
+                  width: 90,
+                  child: Slider(
+                    value: ss.coverRadius.clamp(0, 24),
+                    min: 0,
+                    max: 24,
+                    onChanged: (v) {
+                      ss.coverRadius = v.roundToDouble();
+                      Settings.I.changedQuiet();
+                    },
+                    onChangeEnd: (_) => Settings.I.save(),
+                  ),
+                ),
+              ]),
+            ),
+          ],
           Icon(Icons.photo_size_select_large, size: 16, color: tk.sec),
           SizedBox(
             width: 140,
@@ -452,7 +538,11 @@ class LibraryPageState extends State<LibraryPage> {
       case LibTab.library:
         break;
     }
-    _entries = Library.I.entries(s, folder: folder);
+    final key = '${Library.I.version}|$folder|${ss.sort}|${ss.sortDesc}|${ss.comicsFolderView}|${jsonEncode(f.toJson())}';
+    if (key != _entriesKey) {
+      _entries = Library.I.entries(s, folder: folder);
+      _entriesKey = key;
+    }
     final crumbs = s == Section.comics && ss.comicsFolderView ? _breadcrumbs() : null;
     if (_entries.isEmpty) {
       final hasAny = Library.I.titles(s).isNotEmpty;
@@ -541,7 +631,29 @@ class LibraryPageState extends State<LibraryPage> {
       setState(() => folder = e.relPath);
       return;
     }
-    setState(() => open = e);
+    // First click shows it in the side panel; clicking it again opens it.
+    if (selected?.id == e.id) {
+      _read(e);
+    } else {
+      setState(() => selected = e);
+    }
+  }
+
+  /// The selected entry, refreshed from the latest list so it shows current data.
+  Entry? _currentSelection() {
+    final sel = selected;
+    if (sel == null) return null;
+    for (final e in _entries) {
+      if (e.id == sel.id) return e;
+    }
+    return sel;
+  }
+
+  List<Title> _readingQueueFrom(Entry e, Title start) {
+    if (e is TitleEntry) return _readingQueue(e);
+    final ts_ = e.titles;
+    final i = ts_.indexWhere((x) => x.id == start.id);
+    return [...ts_.sublist(max(0, i)), ..._readingQueue(e).where((x) => !ts_.contains(x))];
   }
 
   void _read(Entry e) {
@@ -557,7 +669,7 @@ class LibraryPageState extends State<LibraryPage> {
   /// The order "next file" follows: the series, then the list it came from.
   List<Title> _readingQueue(Entry from) {
     final out = <Title>[];
-    final i = _entries.indexOf(from);
+    final i = _entries.indexWhere((e) => e.id == from.id);
     for (final e in [..._entries.sublist(max(0, i)), ..._entries.sublist(0, max(0, i))]) {
       if (e is FolderEntry) continue;
       out.addAll(e.titles);
@@ -574,44 +686,89 @@ class LibraryPageState extends State<LibraryPage> {
   }
 
   Widget _grid() {
-    final w = ss.tileSize;
     final style = ss.gridStyle;
-    Widget card(int i) => CoverCard(
-          entry: _entries[i],
-          style: style,
-          ticked: _entries[i].titles.every((t) => ticked.contains(t.id)) && _entries[i] is! FolderEntry,
-          anyTicked: ticked.isNotEmpty,
-          onTap: () => _tap(_entries[i], i),
-          onDouble: () => _read(_entries[i]),
-          onTick: () {
-            final ids = _entries[i].titles.map((t) => t.id);
-            setState(() => ids.every(ticked.contains) ? ticked.removeAll(ids) : ticked.addAll(ids));
-            lastTickIndex = i;
-          },
-        );
-    if (style == 'staggered') {
-      return MasonryGridView.extent(
-        controller: scroll,
-        maxCrossAxisExtent: w,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        itemCount: _entries.length,
-        itemBuilder: (_, i) => card(i),
+    Widget card(int i, double width) {
+      final e = _entries[i];
+      return CoverCard(
+        entry: e,
+        style: style,
+        width: width,
+        radius: ss.coverRadius,
+        fill: ss.coverFill,
+        selected: selected?.id == e.id,
+        ticked: e is! FolderEntry && e.titles.every((t) => ticked.contains(t.id)),
+        anyTicked: ticked.isNotEmpty,
+        onTap: () => _tap(e, i),
+        onMenu: (pos) => _cardMenu(e, pos),
+        onTick: () {
+          final ids = e.titles.map((t) => t.id);
+          setState(() => ids.every(ticked.contains) ? ticked.removeAll(ids) : ticked.addAll(ids));
+          lastTickIndex = i;
+        },
       );
     }
-    final extra = style == 'comfortable' ? 44.0 : 0.0;
-    return GridView.builder(
-      controller: scroll,
-      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: w,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        mainAxisExtent: null,
-        childAspectRatio: w / (w * 1.42 + extra),
-      ),
-      itemCount: _entries.length,
-      itemBuilder: (_, i) => card(i),
+
+    return LayoutBuilder(builder: (context, c) {
+      const gap = 10.0;
+      final cols = max(1, ((c.maxWidth + gap) / (ss.tileSize + gap)).ceil());
+      final cw = (c.maxWidth - gap * (cols - 1)) / cols;
+      if (style == 'staggered') {
+        return MasonryGridView.count(
+          controller: scroll,
+          crossAxisCount: cols,
+          mainAxisSpacing: gap,
+          crossAxisSpacing: gap,
+          itemCount: _entries.length,
+          itemBuilder: (_, i) => card(i, cw),
+        );
+      }
+      final text = style == 'comfortable' ? CoverCard.textHeight(cw) : 0.0;
+      return GridView.builder(
+        controller: scroll,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: cols,
+          mainAxisSpacing: gap,
+          crossAxisSpacing: gap,
+          mainAxisExtent: (cw - 2) * 1.42 + 2 + text,
+        ),
+        itemCount: _entries.length,
+        itemBuilder: (_, i) => card(i, cw),
+      );
+    });
+  }
+
+  Future<void> _cardMenu(Entry e, Offset at) async {
+    if (e is FolderEntry) return;
+    final t = e.cover;
+    final v = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(at.dx, at.dy, at.dx + 1, at.dy + 1),
+      items: [
+        PopupMenuItem(value: 'read', child: Text(e.titles.any((x) => x.inProgress) ? 'Continue reading' : 'Read', style: ts())),
+        PopupMenuItem(value: 'info', child: Text('Show details', style: ts())),
+        const PopupMenuDivider(),
+        PopupMenuItem(value: 'adjust', child: Text('Adjust the cover…', style: ts())),
+        PopupMenuItem(value: 'page', child: Text('Choose the cover page…', style: ts())),
+        const PopupMenuDivider(),
+        PopupMenuItem(value: 'fav', child: Text(e.titles.every((x) => x.favourite) ? 'Not a favourite' : 'Favourite', style: ts())),
+        PopupMenuItem(value: 'mark', child: Text(e.titles.every((x) => x.isRead) ? 'Mark unread' : 'Mark read', style: ts())),
+      ],
     );
+    if (!mounted) return;
+    switch (v) {
+      case 'read':
+        _read(e);
+      case 'info':
+        setState(() => selected = e);
+      case 'adjust':
+        await adjustCover(context, t, ss.coverRadius);
+      case 'page':
+        await chooseCoverPage(context, t);
+      case 'fav':
+        Library.I.toggleFavourite(e.titles);
+      case 'mark':
+        Library.I.markRead(e.titles, !e.titles.every((x) => x.isRead));
+    }
   }
 
   Widget _list() {
@@ -675,10 +832,10 @@ class LibraryPageState extends State<LibraryPage> {
               return Hoverable(
                 builder: (h) => GestureDetector(
                   onTap: () => _tap(e, i),
-                  onDoubleTap: () => _read(e),
+                  onSecondaryTapDown: (d) => _cardMenu(e, d.globalPosition),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
-                    color: isTicked ? lk.tint(tk.field, 0.17) : (h ? tk.raised : null),
+                    color: isTicked || selected?.id == e.id ? lk.tint(tk.field, 0.17) : (h ? tk.raised : null),
                     child: Row(children: [
                       SizedBox(
                         width: 28,
@@ -690,7 +847,7 @@ class LibraryPageState extends State<LibraryPage> {
                               }),
                       ),
                       SizedBox(width: thumb + 8, child: Align(alignment: Alignment.centerLeft,
-                          child: SizedBox(width: thumb, height: thumb * 1.4, child: CoverThumb(title: t, width: thumb)))),
+                          child: SizedBox(width: thumb, height: thumb * 1.4, child: CoverThumb(title: t)))),
                       Expanded(
                         child: Text(
                           e is GroupEntry ? '${e.name}  ·  ${e.readChapters}/${e.titles.length} chapters' : e.name,
@@ -721,216 +878,6 @@ class LibraryPageState extends State<LibraryPage> {
 
   static String _json(Map<String, dynamic> m) => jsonEncode(m);
   static Map _unjson(String s) => jsonDecode(s) as Map;
-}
-
-/// A cover thumbnail, made on first use and cached on disk.
-class CoverThumb extends StatefulWidget {
-  const CoverThumb({super.key, required this.title, required this.width, this.fit = BoxFit.contain, this.natural = false});
-  final Title title;
-  final double width;
-  final BoxFit fit;
-  final bool natural;
-  @override
-  State<CoverThumb> createState() => _CoverThumbState();
-}
-
-class _CoverThumbState extends State<CoverThumb> {
-  File? file;
-  bool failed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(CoverThumb old) {
-    super.didUpdateWidget(old);
-    if (old.title.id != widget.title.id || old.title.coverPage != widget.title.coverPage) {
-      file = null;
-      failed = false;
-      _load();
-    }
-  }
-
-  void _load() {
-    final c = Thumbs.I.cached(widget.title);
-    if (c != null) {
-      file = c;
-      return;
-    }
-    Thumbs.I.get(widget.title).then((f) {
-      if (!mounted) return;
-      setState(() {
-        file = f;
-        failed = f == null;
-      });
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    if (file != null) {
-      final img = Image.file(
-        file!,
-        fit: widget.fit,
-        cacheWidth: (widget.width * dpr).round().clamp(32, 720),
-        gaplessPlayback: true,
-        filterQuality: FilterQuality.medium,
-        errorBuilder: (_, _, _) => _placeholder(),
-      );
-      if (widget.natural) return img;
-      return Container(color: tk.stage, alignment: Alignment.center, child: img);
-    }
-    return _placeholder();
-  }
-
-  Widget _placeholder() => Container(
-        color: tk.stage,
-        height: widget.natural ? widget.width * 1.4 : null,
-        alignment: Alignment.center,
-        child: Icon(failed ? Icons.broken_image_outlined : Icons.image_outlined, size: 20, color: tk.faint),
-      );
-}
-
-class CoverCard extends StatelessWidget {
-  const CoverCard({
-    super.key,
-    required this.entry,
-    required this.style,
-    required this.ticked,
-    required this.anyTicked,
-    required this.onTap,
-    required this.onDouble,
-    required this.onTick,
-  });
-  final Entry entry;
-  final String style;
-  final bool ticked;
-  final bool anyTicked;
-  final VoidCallback onTap;
-  final VoidCallback onDouble;
-  final VoidCallback onTick;
-
-  @override
-  Widget build(BuildContext context) {
-    final e = entry;
-    final t = e.cover;
-    final folder = e is FolderEntry;
-    final progress = Library.I.entryProgress(e);
-    final fav = e.titles.any((x) => x.favourite);
-    final r = e is TitleEntry ? t.rating : 0.0;
-    final reads = e is TitleEntry ? t.readCount : 0;
-    return LayoutBuilder(builder: (context, c) {
-      final w = c.maxWidth;
-      final cover = Stack(children: [
-        Positioned.fill(child: CoverThumb(title: t, width: w, fit: BoxFit.cover)),
-        if (style == 'staggered') const SizedBox(),
-        if (folder)
-          Positioned(left: 6, top: 6, child: _badge(Icons.folder_outlined, '${e.titles.length}')),
-        if (e is GroupEntry) Positioned(left: 6, top: 6, child: _badge(null, '${e.readChapters}/${e.titles.length}')),
-        if (fav) Positioned(right: 6, top: 6, child: _badge(Icons.favorite, null, color: const Color(0xFFFF6FB1))),
-        if (r > 0 && style != 'cover') Positioned(left: 6, bottom: 8, child: _badge(Icons.star_rounded, r.toString().replaceAll('.0', ''))),
-        if (reads > 1) Positioned(right: 6, bottom: 8, child: _badge(null, '×$reads')),
-        if (t.missing) Positioned.fill(child: Container(color: Colors.black54, alignment: Alignment.center,
-            child: Text('Not found', style: ts(c: Colors.white, w: FontWeight.w600)))),
-        if (style == 'compact')
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(6, 18, 6, 8),
-              decoration: const BoxDecoration(
-                  gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                      colors: [Color(0x00000000), Color(0xDD000000)])),
-              child: Text(e.name, maxLines: 2, overflow: TextOverflow.ellipsis,
-                  style: ts(c: Colors.white, size: lk.fontSize - 1, w: FontWeight.w600)),
-            ),
-          ),
-        if (Settings.I.progressLine && progress > 0)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Container(
-              height: 3,
-              color: Colors.black45,
-              alignment: Alignment.centerLeft,
-              child: FractionallySizedBox(
-                widthFactor: progress,
-                child: Container(decoration: BoxDecoration(gradient: progress >= 1 ? null : lk.grad, color: progress >= 1 ? tk.ok : null)),
-              ),
-            ),
-          ),
-        if (!folder && (anyTicked || ticked))
-          Positioned(
-            right: 4,
-            bottom: 6,
-            child: SizedBox(
-              width: 24,
-              height: 24,
-              child: Checkbox(value: ticked, onChanged: (_) => onTick()),
-            ),
-          ),
-      ]);
-      final coverBox = ClipRRect(
-        borderRadius: BorderRadius.circular(lk.rControl - 1),
-        child: style == 'staggered'
-            ? Stack(children: [CoverThumb(title: t, width: w, natural: true), Positioned.fill(child: cover)])
-            : AspectRatio(aspectRatio: 1 / 1.42, child: cover),
-      );
-      return Hoverable(
-        builder: (h) => GestureDetector(
-          onTap: onTap,
-          onDoubleTap: onDouble,
-          child: MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(lk.rControl + 2),
-                color: ticked ? lk.tint(tk.ground, 0.17) : (h ? tk.raised : null),
-                border: ticked ? Border.all(color: lk.outline, width: lk.outlineWidth) : null,
-              ),
-              padding: const EdgeInsets.all(3),
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                if (style == 'staggered') coverBox else Expanded(child: coverBox),
-                if (style == 'comfortable') ...[
-                  const SizedBox(height: 4),
-                  SizedBox(
-                    height: 36,
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: ts(size: lk.fontSize - 0.5, w: FontWeight.w600, c: t.missing ? tk.faint : tk.text)),
-                      Text(
-                          folder
-                              ? '${e.titles.length} files'
-                              : (t.displayArtist ?? (t.section == Section.comics && t.year != null ? '${t.year}' : '')),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: ts(size: lk.fontSize - 1.5, c: tk.faint)),
-                    ]),
-                  ),
-                ],
-              ]),
-            ),
-          ),
-        ),
-      );
-    });
-  }
-
-  Widget _badge(IconData? icon, String? text, {Color? color}) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-        decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.72), borderRadius: BorderRadius.circular(5)),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (icon != null) Icon(icon, size: 12, color: color ?? Colors.white),
-          if (icon != null && text != null) const SizedBox(width: 3),
-          if (text != null) Text(text, style: ts(size: 11, c: Colors.white, w: FontWeight.w600, tab: true)),
-        ]),
-      );
 }
 
 /// "Add to tag" menu for ticked or opened titles.

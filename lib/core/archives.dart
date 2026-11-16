@@ -122,13 +122,33 @@ String? findSevenZip() {
 List<String> listWith7z(String sevenZip, String archive) {
   final r = Process.runSync(sevenZip, ['l', '-slt', '-ba', '-sccUTF-8', archive],
       stdoutEncoding: utf8, stderrEncoding: utf8);
-  if (r.exitCode != 0) {
-    throw Exception('7-Zip couldn\'t read the file (${(r.stderr as String).trim()})');
+  return _parse7zList(r, archive);
+}
+
+/// The same, without making the window wait for 7-Zip.
+Future<List<String>> listWith7zAsync(String sevenZip, String archive) async {
+  final r = await Process.run(sevenZip, ['l', '-slt', '-ba', '-sccUTF-8', archive],
+      stdoutEncoding: utf8, stderrEncoding: utf8);
+  return _parse7zList(r, archive);
+}
+
+List<String> _parse7zList(ProcessResult r, String archive) {
+  final names = _names7z(r.stdout as String);
+  // Exit code 2 = errors; a damaged archive can still have readable pages.
+  if (r.exitCode != 0 && names.isEmpty) {
+    final err = (r.stderr as String).trim();
+    throw Exception(err.isEmpty
+        ? 'the file looks damaged (7-Zip reports a header error)'
+        : '7-Zip couldn\'t read it ($err)');
   }
+  return names;
+}
+
+List<String> _names7z(String stdout) {
   final names = <String>[];
   String? current;
   var isDir = false;
-  for (final line in const LineSplitter().convert(r.stdout as String)) {
+  for (final line in const LineSplitter().convert(stdout)) {
     if (line.startsWith('Path = ')) {
       if (current != null && !isDir) names.add(current);
       current = line.substring(7);
@@ -150,7 +170,7 @@ abstract class Book {
   Future<Uint8List> page(int i);
   void close();
 
-  static Future<Book> open(String path, {required String cacheDir, String? sevenZip}) async {
+  static Future<Book> open(String path, {required String cacheDir, String? sevenZip, bool unpack = true}) async {
     final raf = File(path).openSync();
     String kind;
     try {
@@ -168,7 +188,18 @@ abstract class Book {
     if (sevenZip == null) {
       throw Exception('7-Zip is missing, so this RAR file can\'t be opened.');
     }
-    return RarBook.open(path, cacheDir, sevenZip);
+    return RarBook.open(path, cacheDir, sevenZip, unpack: unpack);
+  }
+}
+
+/// Just one page, for covers: never unpacks the whole book.
+Future<Uint8List?> readOnePage(String path, int index, {String? sevenZip, required String cacheDir}) async {
+  final book = await Book.open(path, cacheDir: cacheDir, sevenZip: sevenZip, unpack: false);
+  try {
+    if (book.length == 0) return null;
+    return await book.page(index.clamp(0, book.length - 1));
+  } finally {
+    book.close();
   }
 }
 
@@ -212,11 +243,11 @@ class RarBook extends Book {
   Process? _extract;
   final Completer<bool> _done = Completer<bool>();
 
-  static Future<RarBook> open(String path, String cacheRoot, String sevenZip) async {
+  static Future<RarBook> open(String path, String cacheRoot, String sevenZip, {bool unpack = true}) async {
     final st = await File(path).stat();
     final key = sha1.convert(utf8.encode('$path|${st.size}|${st.modified.millisecondsSinceEpoch}')).toString();
     final dir = p.join(cacheRoot, key);
-    final names = listWith7z(sevenZip, path);
+    final names = await listWith7zAsync(sevenZip, path);
     final book = RarBook._(path, dir, sevenZip, names);
     final marker = File(p.join(dir, '.complete'));
     if (marker.existsSync()) {
@@ -224,7 +255,7 @@ class RarBook extends Book {
       try {
         File(p.join(dir, '.complete')).setLastModifiedSync(DateTime.now());
       } catch (_) {}
-    } else {
+    } else if (unpack) {
       book._start();
     }
     return book;
@@ -258,12 +289,16 @@ class RarBook extends Book {
     if (_done.isCompleted && await _done.future && await f.exists()) {
       return f.readAsBytes();
     }
+    if (await f.exists() && _extract == null && File(p.join(dir, '.complete')).existsSync()) {
+      return f.readAsBytes();
+    }
     // Pull this one page out directly while the full unpack runs.
     final r = await Process.run(sevenZip, ['e', '-so', '-sccUTF-8', path, name],
         stdoutEncoding: null);
-    if (r.exitCode == 0 && (r.stdout as List<int>).isNotEmpty) {
+    if ((r.stdout as List<int>).isNotEmpty) {
       return Uint8List.fromList(r.stdout as List<int>);
     }
+    if (_extract == null) throw Exception('page ${i + 1} couldn\'t be read from the file');
     await _done.future;
     return f.readAsBytes();
   }

@@ -3,7 +3,7 @@ import 'package:material_ui/material_ui.dart' hide Title;
 import '../core/db.dart';
 import '../core/library.dart';
 import '../core/settings.dart';
-import 'library_page.dart';
+import 'covers.dart';
 import 'look.dart';
 import 'widgets.dart';
 
@@ -227,7 +227,7 @@ class _TagsViewState extends State<TagsView> {
                               child: Row(children: [
                                 Text('${i + 1}', style: ts(c: tk.faint, tab: true)),
                                 const SizedBox(width: 10),
-                                SizedBox(width: 40, height: 56, child: CoverThumb(title: t, width: 40)),
+                                SizedBox(width: 40, height: 56, child: CoverThumb(title: t)),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -253,16 +253,19 @@ class _TagsViewState extends State<TagsView> {
                       maxCrossAxisExtent: Settings.I.of(s).tileSize,
                       mainAxisSpacing: 10,
                       crossAxisSpacing: 10,
-                      childAspectRatio: 1 / (1.42 + 44 / Settings.I.of(s).tileSize),
+                      childAspectRatio: Settings.I.of(s).tileSize / (Settings.I.of(s).tileSize * 1.42 + CoverCard.textHeight(Settings.I.of(s).tileSize)),
                     ),
                     itemCount: entries.length,
                     itemBuilder: (_, i) => CoverCard(
                       entry: entries[i],
                       style: 'comfortable',
+                      width: Settings.I.of(s).tileSize,
+                      radius: Settings.I.of(s).coverRadius,
+                      fill: Settings.I.of(s).coverFill,
+                      selected: false,
                       ticked: false,
                       anyTicked: false,
                       onTap: () => widget.onOpen(entries[i]),
-                      onDouble: () => widget.onOpen(entries[i]),
                       onTick: () {},
                     ),
                   ),

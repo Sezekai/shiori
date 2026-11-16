@@ -27,6 +27,7 @@ void main() {
     }
     Settings.I.of(Section.manga).folders = [books.path];
     Library.I.load();
+    await Thumbs.I.loadIndex();
     Thumbs.I.encoder = (Uint8List b) async => Uint8List.fromList(img.encodeJpg(img.decodeImage(b)!));
     final titles = <Title>[];
     // Scan directly without the job queue.

@@ -5,7 +5,7 @@ import '../core/jobs.dart';
 import '../core/library.dart';
 import '../core/settings.dart';
 import 'app.dart';
-import 'library_page.dart';
+import 'covers.dart';
 import 'widgets.dart';
 
 class _Item {
@@ -129,7 +129,7 @@ class _HistoryPageState extends State<HistoryPage> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(color: h ? tk.raised : null, borderRadius: BorderRadius.circular(lk.rControl)),
         child: Row(children: [
-          SizedBox(width: 42, height: 60, child: ClipRRect(borderRadius: BorderRadius.circular(4), child: CoverThumb(title: t, width: 42))),
+          SizedBox(width: 42, height: 60, child: ClipRRect(borderRadius: BorderRadius.circular(4), child: CoverThumb(title: t))),
           const SizedBox(width: 12),
           Expanded(
             child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [

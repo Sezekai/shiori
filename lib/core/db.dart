@@ -49,6 +49,9 @@ class Title {
   String? userSeries;
   double? userChapter;
   int coverPage;
+  double coverX; // -1 … 1, where the cover sits when it fills the tile
+  double coverY;
+  double coverZoom; // 1 … 4
   int addedAt;
   bool missing;
   double rating; // 0 = not rated; 0.5 … 5
@@ -99,6 +102,9 @@ class Title {
     this.userSeries,
     this.userChapter,
     this.coverPage = 0,
+    this.coverX = 0,
+    this.coverY = 0,
+    this.coverZoom = 1,
     required this.addedAt,
     this.missing = false,
     this.rating = 0,
@@ -123,6 +129,12 @@ class Title {
       ? '${(displayArtist ?? '').toLowerCase()}|${userSeries!.toLowerCase()}'
       : seriesKey;
   bool get isRead => readCount > 0;
+  bool get unreadable => pages == 0;
+  /// Plain .zip/.rar files with no pages are containers, not books.
+  bool get isContainer {
+    final l = fileName.toLowerCase();
+    return pages == 0 && (l.endsWith('.zip') || l.endsWith('.rar'));
+  }
   bool get inProgress => readCount == 0 && lastPage > 0;
   double get progress => pages <= 0
       ? 0
@@ -165,6 +177,9 @@ class Title {
         userSeries: r['user_series'] as String?,
         userChapter: (r['user_chapter'] as num?)?.toDouble(),
         coverPage: r['cover_page'] as int? ?? 0,
+        coverX: (r['cover_x'] as num?)?.toDouble() ?? 0,
+        coverY: (r['cover_y'] as num?)?.toDouble() ?? 0,
+        coverZoom: (r['cover_zoom'] as num?)?.toDouble() ?? 1,
         addedAt: r['added_at'] as int,
         missing: (r['missing'] as int? ?? 0) == 1,
         rating: (r['rating'] as num?)?.toDouble() ?? 0,
@@ -281,6 +296,14 @@ CREATE TABLE IF NOT EXISTS changes(
 PRAGMA user_version = 1;
 ''');
     }
+    if (v < 2) {
+      raw.execute('''
+ALTER TABLE titles ADD COLUMN cover_x REAL DEFAULT 0;
+ALTER TABLE titles ADD COLUMN cover_y REAL DEFAULT 0;
+ALTER TABLE titles ADD COLUMN cover_zoom REAL DEFAULT 1;
+PRAGMA user_version = 2;
+''');
+    }
   }
 
   // ---------- titles ----------
@@ -321,12 +344,15 @@ PRAGMA user_version = 1;
 
   void updateEdits(Title t) {
     raw.execute('''UPDATE titles SET user_title=?, user_artist=?, user_series=?, user_chapter=?,
-      cover_page=?, needs_check=?, updated_at=? WHERE id=?''', [
+      cover_page=?, cover_x=?, cover_y=?, cover_zoom=?, needs_check=?, updated_at=? WHERE id=?''', [
       t.userTitle,
       t.userArtist,
       t.userSeries,
       t.userChapter,
       t.coverPage,
+      t.coverX,
+      t.coverY,
+      t.coverZoom,
       t.needsCheck ? 1 : 0,
       nowSec(),
       t.id,

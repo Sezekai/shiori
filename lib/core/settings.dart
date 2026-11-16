@@ -7,15 +7,15 @@ import 'paths.dart';
 
 /// The three library sections.
 enum Section {
-  manga('Manga'),
   comics('Comics'),
-  artbooks('Art Books');
+  artbooks('Art Books'),
+  manga('Manga');
 
   const Section(this.label);
   final String label;
 
   static Section byName(String n) =>
-      Section.values.firstWhere((s) => s.name == n, orElse: () => Section.manga);
+      Section.values.firstWhere((s) => s.name == n, orElse: () => Section.comics);
 }
 
 enum ReadDirection { ltr, rtl, ttb }
@@ -48,6 +48,8 @@ class SectionSettings {
   String sort;
   bool sortDesc;
   bool comicsFolderView;
+  double coverRadius; // corner rounding of covers in the grid
+  bool coverFill; // fill the tile (crop) instead of fitting inside it
   Map<String, String> presets; // name -> json of filter + sort
 
   SectionSettings({
@@ -67,6 +69,8 @@ class SectionSettings {
     this.sort = 'title',
     this.sortDesc = false,
     this.comicsFolderView = true,
+    this.coverRadius = 6,
+    this.coverFill = true,
     Map<String, String>? presets,
   }) : presets = presets ?? {};
 
@@ -87,6 +91,8 @@ class SectionSettings {
         'sort': sort,
         'sortDesc': sortDesc,
         'comicsFolderView': comicsFolderView,
+        'coverRadius': coverRadius,
+        'coverFill': coverFill,
         'presets': presets,
       };
 
@@ -111,6 +117,8 @@ class SectionSettings {
         sort: m['sort'] as String? ?? d.sort,
         sortDesc: m['sortDesc'] as bool? ?? d.sortDesc,
         comicsFolderView: m['comicsFolderView'] as bool? ?? d.comicsFolderView,
+        coverRadius: (m['coverRadius'] as num?)?.toDouble() ?? d.coverRadius,
+        coverFill: m['coverFill'] as bool? ?? d.coverFill,
         presets: (m['presets'] as Map?)?.cast<String, String>() ?? {},
       );
 

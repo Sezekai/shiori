@@ -21,6 +21,7 @@ import 'core/log.dart';
 import 'core/paths.dart';
 import 'core/settings.dart';
 import 'ui/app.dart';
+import 'ui/library_page.dart';
 import 'ui/look.dart';
 import 'ui/reader.dart';
 
@@ -87,6 +88,7 @@ Future<void> main(List<String> args) async {
   }
   Library.I.load();
   Thumbs.I.encoder = makeCover;
+  await Thumbs.I.loadIndex().timeout(const Duration(seconds: 15), onTimeout: () {});
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     await windowManager.ensureInitialized();
@@ -296,6 +298,7 @@ Future<void> _runSelftest() async {
   }
 
   try {
+    Nav.I.go(PageId.library, Section.manga);
     Library.I.scan(Section.manga);
     final until = DateTime.now().add(const Duration(seconds: 90));
     while ((Jobs.I.current != null || Jobs.I.queue.isNotEmpty) && DateTime.now().isBefore(until)) {
@@ -311,6 +314,9 @@ Future<void> _runSelftest() async {
     check(covers == 3, 'covers made ($covers of 3)');
     await Future<void>.delayed(const Duration(seconds: 1));
     await _screenshot('library');
+    LibraryPageState.active?.selectFirst();
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    await _screenshot('library-panel');
     final ctx = navKey.currentContext;
     if (ctx != null && titles.isNotEmpty) {
       final first = Library.I.seriesGroups(Section.manga).values.first.first;

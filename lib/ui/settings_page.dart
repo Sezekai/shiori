@@ -371,7 +371,7 @@ class _SettingsPageState extends State<SettingsPage> {
         await e.delete(recursive: true);
       } catch (_) {}
     }
-    Thumbs.I.version++;
+    if (dir == AppPaths.I.thumbs) Thumbs.I.forgetAll();
     Library.I.changed();
   }
 

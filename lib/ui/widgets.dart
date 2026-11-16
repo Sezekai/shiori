@@ -81,7 +81,7 @@ class _BtnState extends State<Btn> {
             ? [BoxShadow(color: lk.acc.withValues(alpha: 0.45), blurRadius: 12, offset: const Offset(0, 4))]
             : null,
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
+      child: Row(mainAxisSize: MainAxisSize.min, mainAxisAlignment: MainAxisAlignment.center, children: [
         if (widget.icon != null) Icon(widget.icon, size: 16, color: fg),
         if (widget.icon != null && widget.label.isNotEmpty) const SizedBox(width: 6),
         if (widget.label.isNotEmpty)
@@ -234,7 +234,8 @@ class Drop<T> extends StatelessWidget {
   }
 }
 
-class Field extends StatelessWidget {
+/// Text box: a little taller than buttons, with the icon, text and hint on one centred line.
+class Field extends StatefulWidget {
   const Field({super.key, this.controller, this.hint, this.onChanged, this.onSubmitted, this.focusNode,
       this.width, this.icon, this.autofocus = false, this.mono = false});
   final TextEditingController? controller;
@@ -246,35 +247,68 @@ class Field extends StatelessWidget {
   final IconData? icon;
   final bool autofocus;
   final bool mono;
+
+  static double get height => lk.hControl + 6;
+
+  @override
+  State<Field> createState() => _FieldState();
+}
+
+class _FieldState extends State<Field> {
+  late final FocusNode _own = FocusNode();
+  FocusNode get _focus => widget.focusNode ?? _own;
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(_changed);
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _focus.removeListener(_changed);
+    _own.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: lk.hControl,
-      width: width,
-      child: TextField(
-        controller: controller,
-        focusNode: focusNode,
-        autofocus: autofocus,
-        onChanged: onChanged,
-        onSubmitted: onSubmitted,
-        style: ts(mono: mono),
-        textAlignVertical: TextAlignVertical.center,
-        cursorColor: lk.acc,
-        decoration: InputDecoration(
-          isDense: true,
-          hintText: hint,
-          hintStyle: ts(c: tk.faint),
-          prefixIcon: icon == null ? null : Icon(icon, size: 16, color: tk.faint),
-          prefixIconConstraints: const BoxConstraints(minWidth: 30),
-          filled: true,
-          fillColor: tk.field,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(lk.rControl),
-              borderSide: BorderSide(color: tk.line)),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(lk.rControl),
-              borderSide: BorderSide(color: lk.outline, width: lk.outlineWidth)),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(lk.rControl)),
+    final focused = _focus.hasFocus;
+    return GestureDetector(
+      onTap: () => _focus.requestFocus(),
+      child: Container(
+        height: Field.height,
+        width: widget.width,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: tk.field,
+          borderRadius: BorderRadius.circular(lk.rControl),
+          border: Border.all(color: focused ? lk.outline : tk.line, width: focused ? lk.outlineWidth : 1),
         ),
+        child: Row(children: [
+          if (widget.icon != null) ...[
+            Icon(widget.icon, size: 16, color: focused ? tk.sec : tk.faint),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: TextField(
+              controller: widget.controller,
+              focusNode: _focus,
+              autofocus: widget.autofocus,
+              onChanged: widget.onChanged,
+              onSubmitted: widget.onSubmitted,
+              style: ts(mono: widget.mono),
+              cursorColor: lk.acc,
+              cursorHeight: lk.fontSize + 3,
+              textAlignVertical: TextAlignVertical.center,
+              decoration: InputDecoration.collapsed(hintText: widget.hint, hintStyle: ts(c: tk.faint, mono: widget.mono)),
+            ),
+          ),
+        ]),
       ),
     );
   }

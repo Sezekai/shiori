@@ -1,6 +1,7 @@
 // ignore_for_file: deprecated_member_use
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart' hide Title;
 import 'package:window_manager/window_manager.dart';
@@ -28,7 +29,7 @@ class Nav extends ChangeNotifier {
   static final Nav I = Nav._();
 
   PageId page = PageId.library;
-  Section section = Section.manga;
+  Section section = Section.comics;
   bool railHidden = false;
   bool panelsHidden = false;
   bool logOpen = false;
@@ -37,10 +38,40 @@ class Nav extends ChangeNotifier {
   bool readerOpen = false;
   final FocusNode searchFocus = FocusNode();
 
+  final List<(PageId, Section)> _history = [];
+  final List<bool Function()> _backHandlers = [];
+
   void go(PageId p, [Section? s]) {
+    final next = (p, s ?? section);
+    if (next != (page, section)) {
+      _history.add((page, section));
+      if (_history.length > 50) _history.removeAt(0);
+    }
     page = p;
     if (s != null) section = s;
     notifyListeners();
+  }
+
+  /// Screens add a handler while they have something to step back from
+  /// (an open panel, a folder); the newest one goes first.
+  void addBack(bool Function() h) => _backHandlers.add(h);
+  void removeBack(bool Function() h) => _backHandlers.remove(h);
+
+  /// The mouse's back button: closes the innermost thing, else the previous screen.
+  void back() {
+    if (keysOpen) {
+      toggle('keys');
+      return;
+    }
+    for (final h in _backHandlers.reversed.toList()) {
+      if (h()) return;
+    }
+    if (_history.isNotEmpty) {
+      final (p, s) = _history.removeLast();
+      page = p;
+      section = s;
+      notifyListeners();
+    }
   }
 
   void toggle(String what) {
@@ -188,11 +219,11 @@ class _ShellState extends State<Shell> {
       case LogicalKeyboardKey.keyS:
         Nav.I.go(PageId.settings);
       case LogicalKeyboardKey.digit1:
-        Nav.I.go(PageId.library, Section.manga);
-      case LogicalKeyboardKey.digit2:
         Nav.I.go(PageId.library, Section.comics);
-      case LogicalKeyboardKey.digit3:
+      case LogicalKeyboardKey.digit2:
         Nav.I.go(PageId.library, Section.artbooks);
+      case LogicalKeyboardKey.digit3:
+        Nav.I.go(PageId.library, Section.manga);
       default:
         return KeyEventResult.ignored;
     }
@@ -201,7 +232,11 @@ class _ShellState extends State<Shell> {
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
+    return Listener(
+      onPointerDown: (e) {
+        if (e.buttons & kBackMouseButton != 0) Nav.I.back();
+      },
+      child: Focus(
       focusNode: _focus,
       autofocus: true,
       onKeyEvent: _onKey,
@@ -228,6 +263,7 @@ class _ShellState extends State<Shell> {
             ]),
           );
         },
+      ),
       ),
     );
   }
@@ -312,24 +348,68 @@ class _WindowButtonsState extends State<WindowButtons> with WindowListener {
   @override
   void onWindowUnmaximize() => setState(() => maxed = false);
 
-  Widget _b(IconData icon, VoidCallback onTap, {bool close = false}) => Hoverable(
-        builder: (h) => GestureDetector(
-          onTap: onTap,
-          child: Container(
-            width: 46,
-            height: 31,
-            color: h ? (close ? const Color(0xFFE81123) : tk.raised2) : Colors.transparent,
-            child: Icon(icon, size: 15, color: h && close ? Colors.white : tk.sec),
+  Widget _b(String glyph, VoidCallback onTap, String tip, {bool close = false}) => Tooltip(
+        message: tip,
+        waitDuration: const Duration(milliseconds: 700),
+        child: Hoverable(
+          builder: (h) => GestureDetector(
+            onTap: onTap,
+            child: Container(
+              width: 46,
+              height: 32,
+              color: h ? (close ? const Color(0xFFE81123) : tk.raised2) : Colors.transparent,
+              alignment: Alignment.center,
+              child: CustomPaint(
+                size: const Size(10, 10),
+                painter: _GlyphPainter(glyph, h && close ? Colors.white : tk.sec),
+              ),
+            ),
           ),
         ),
       );
 
   @override
   Widget build(BuildContext context) => Row(children: [
-        _b(Icons.remove, () => windowManager.minimize()),
-        _b(maxed ? Icons.filter_none : Icons.crop_square, () => maxed ? windowManager.unmaximize() : windowManager.maximize()),
-        _b(Icons.close, () => windowManager.close(), close: true),
+        _b('min', () => windowManager.minimize(), 'Minimise'),
+        _b(maxed ? 'restore' : 'max', () => maxed ? windowManager.unmaximize() : windowManager.maximize(),
+            maxed ? 'Restore' : 'Maximise'),
+        _b('close', () => windowManager.close(), 'Close', close: true),
       ]);
+}
+
+/// The three window glyphs, drawn in the same 10 × 10 box with 1 px lines.
+class _GlyphPainter extends CustomPainter {
+  _GlyphPainter(this.glyph, this.color);
+  final String glyph;
+  final Color color;
+  @override
+  void paint(Canvas c, Size s) {
+    final pt = Paint()
+      ..color = color
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke
+      ..isAntiAlias = glyph == 'close';
+    switch (glyph) {
+      case 'min':
+        c.drawLine(Offset(0, s.height / 2 + 0.5), Offset(s.width, s.height / 2 + 0.5), pt);
+      case 'max':
+        c.drawRect(const Rect.fromLTWH(0.5, 0.5, 9, 9), pt);
+      case 'restore':
+        c.drawRect(const Rect.fromLTWH(0.5, 2.5, 7, 7), pt);
+        c.drawPath(Path()
+          ..moveTo(2.5, 2.5)
+          ..lineTo(2.5, 0.5)
+          ..lineTo(9.5, 0.5)
+          ..lineTo(9.5, 7.5)
+          ..lineTo(7.5, 7.5), pt);
+      case 'close':
+        c.drawLine(Offset.zero, Offset(s.width, s.height), pt);
+        c.drawLine(Offset(s.width, 0), Offset(0, s.height), pt);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_GlyphPainter o) => o.glyph != glyph || o.color != color;
 }
 
 class StatusPills extends StatelessWidget {
@@ -372,7 +452,9 @@ class StatusPills extends StatelessWidget {
 class Rail extends StatelessWidget {
   const Rail({super.key});
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(listenable: Nav.I, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
     final nav = Nav.I;
     Widget item(IconData icon, String label, bool active, VoidCallback onTap, {int? badge}) => Hoverable(
           builder: (h) => GestureDetector(
@@ -422,12 +504,12 @@ class Rail extends StatelessWidget {
           child: Icon(Icons.bookmark_outline, size: 20, color: lk.onAcc),
         ),
         const SizedBox(height: 10),
-        item(Icons.menu_book_outlined, 'Manga', lib && nav.section == Section.manga,
-            () => nav.go(PageId.library, Section.manga)),
         item(Icons.auto_stories_outlined, 'Comics', lib && nav.section == Section.comics,
             () => nav.go(PageId.library, Section.comics)),
         item(Icons.palette_outlined, 'Art Books', lib && nav.section == Section.artbooks,
             () => nav.go(PageId.library, Section.artbooks)),
+        item(Icons.menu_book_outlined, 'Manga', lib && nav.section == Section.manga,
+            () => nav.go(PageId.library, Section.manga)),
         item(Icons.history, 'History', nav.page == PageId.history, () => nav.go(PageId.history)),
         item(Icons.insights_outlined, 'Stats', nav.page == PageId.stats, () => nav.go(PageId.stats)),
         item(Icons.collections_outlined, 'Saved', nav.page == PageId.saved, () => nav.go(PageId.saved)),
@@ -447,6 +529,9 @@ class Rail extends StatelessWidget {
 }
 
 // ---------------- status bar ----------------
+
+int _countVersion = -1;
+int _count = 0;
 
 class StatusBar extends StatelessWidget {
   const StatusBar({super.key});
@@ -481,8 +566,12 @@ class StatusBar extends StatelessWidget {
   Widget _libCount() => ListenableBuilder(
         listenable: Library.I,
         builder: (_, _) {
-          final n = Section.values.fold<int>(0, (a, s) => a + Library.I.titles(s).where((t) => !t.missing).length);
-          return Text('$n titles', style: ts(c: tk.faint, tab: true));
+          if (_countVersion != Library.I.version) {
+            _countVersion = Library.I.version;
+            _count = Section.values.fold<int>(
+                0, (a, s) => a + Library.I.titles(s).where((t) => !t.missing && !t.isContainer).length);
+          }
+          return Text('$_count titles', style: ts(c: tk.faint, tab: true));
         },
       );
 
@@ -597,12 +686,14 @@ const keyGroups = <(String, List<(String, String)>)>[
     ('M', 'Show or hide the sidebar'),
     ('L', 'Open or close the log'),
     ('S', 'Settings'),
-    ('1 2 3', 'Manga, Comics, Art Books'),
+    ('1 2 3', 'Comics, Art Books, Manga'),
     ('Esc', 'Close, innermost first'),
+    ('Mouse back', 'Go back: close panels, up a folder, previous screen'),
   ]),
   ('Library', [
-    ('Click', 'Open a title'),
-    ('Double-click', 'Read or continue'),
+    ('Click', 'Show its details on the right'),
+    ('Click again', 'Read or continue'),
+    ('Right-click', 'More: adjust the cover, cover page…'),
     ('Ctrl+click', 'Tick'),
     ('Shift+click', 'Tick a range'),
     ('Ctrl+A', 'Tick everything shown'),
@@ -613,7 +704,8 @@ const keyGroups = <(String, List<(String, String)>)>[
   ('Reader', [
     ('← →', 'Previous / next, following the reading direction'),
     ('PgUp PgDn', 'Previous / next'),
-    ('Space', 'Next page'),
+    ('Space', 'Show or hide the controls'),
+    ('Mouse back', 'Close the reader'),
     ('Home End', 'First / last page'),
     ('↑ ↓', 'Zoom (scroll in strip mode)'),
     ('0, 1', 'Fit; actual size'),

@@ -140,6 +140,7 @@ const sortKeys = {
 
 /// What the grid shows: a single title, a series, or (comics) a folder.
 sealed class Entry {
+  String get id;
   String get name;
   List<Title> get titles;
   Title get cover => titles.first;
@@ -148,6 +149,8 @@ sealed class Entry {
 class TitleEntry extends Entry {
   TitleEntry(this.t);
   final Title t;
+  @override
+  String get id => 't${t.id}';
   @override
   String get name => t.displayTitle;
   @override
@@ -161,6 +164,8 @@ class GroupEntry extends Entry {
   final List<Title> titles; // in chapter order
   final String label;
   @override
+  String get id => 'g$key';
+  @override
   String get name => label;
   int get readChapters => titles.where((t) => t.isRead).length;
 }
@@ -170,6 +175,8 @@ class FolderEntry extends Entry {
   final String relPath;
   @override
   final List<Title> titles;
+  @override
+  String get id => 'f$relPath';
   @override
   String get name => p.basename(relPath);
 }
@@ -223,6 +230,15 @@ class Library extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Goes up on every change, so screens can reuse work until it moves.
+  int version = 0;
+
+  @override
+  void notifyListeners() {
+    version++;
+    super.notifyListeners();
+  }
+
   void changed() => notifyListeners();
 
   void reshuffle() {
@@ -272,7 +288,7 @@ class Library extends ChangeNotifier {
   Map<String, List<Title>> seriesGroups(Section s) {
     final m = <String, List<Title>>{};
     for (final t in _titles[s]!) {
-      if (t.missing) continue;
+      if (t.missing || t.isContainer) continue;
       m.putIfAbsent(t.groupKey, () => []).add(t);
     }
     m.removeWhere((k, v) => v.length < 2);
@@ -310,7 +326,7 @@ class Library extends ChangeNotifier {
         list.add(GroupEntry(g.key, g.value, _groupLabel(first)));
       }
       for (final t in _titles[s]!) {
-        if (t.missing) continue;
+        if (t.missing || t.isContainer) continue;
         if (groups.containsKey(t.groupKey)) continue;
         if (matches(t, f)) list.add(TitleEntry(t));
       }
@@ -331,7 +347,7 @@ class Library extends ChangeNotifier {
     final here = <Entry>[];
     final prefix = folder.isEmpty ? '' : '$folder${p.separator}';
     for (final t in _titles[s]!) {
-      if (t.missing) continue;
+      if (t.missing || t.isContainer) continue;
       final rel = t.root.isEmpty ? t.relDir : p.join(_rootLabel(t.root), t.relDir);
       final relNorm = rel.endsWith(p.separator) ? rel.substring(0, rel.length - 1) : rel;
       if (folder.isEmpty || relNorm == folder || relNorm.startsWith(prefix)) {
@@ -532,7 +548,8 @@ class Library extends ChangeNotifier {
     final toInspect = <String>[];
     for (final e in listed.entries) {
       final t = existing[e.key];
-      if (t == null || t.size != e.value.$1 || t.mtime != e.value.$2 || t.pages == 0) {
+      // Unchanged files are skipped, damaged ones included: they're retried only when they change.
+      if (t == null || t.size != e.value.$1 || t.mtime != e.value.$2) {
         toInspect.add(e.key);
       } else if (t.missing) {
         t.missing = false;
@@ -792,6 +809,10 @@ Future<List<FileInfo>> _inspectInBackground(List<String> paths, String? sevenZip
     Isolate.run(() => [for (final x in paths) inspectFile(x, sevenZip)]);
 
 /// Cover thumbnails, cached on disk (Cache\thumbs).
+///
+/// Which covers exist is kept in memory (read from the folder once), so
+/// drawing the grid never touches the disk. Covers that couldn't be made are
+/// remembered too, so they aren't retried on every redraw.
 class Thumbs extends ChangeNotifier {
   Thumbs._();
   static final Thumbs I = Thumbs._();
@@ -799,22 +820,48 @@ class Thumbs extends ChangeNotifier {
   /// Set by the UI layer: decodes, scales and encodes one cover.
   Future<Uint8List?> Function(Uint8List bytes)? encoder;
   final Map<String, Future<File?>> _pending = {};
+  final Set<String> _have = {};
+  final Set<String> _failed = {};
+  bool _loaded = false;
   int _running = 0;
   final int _workers = min(6, max(2, Platform.numberOfProcessors ~/ 2));
   final List<(Title, Completer<File?>)> _wait = [];
   int version = 0;
 
-  String fileFor(Title t) => p.join(AppPaths.I.thumbs, '${t.fingerprint}_${t.coverPage}.jpg');
-
-  File? cached(Title t) {
-    final f = File(fileFor(t));
-    return f.existsSync() ? f : null;
+  /// Reads the list of existing covers once, in the background.
+  Future<void> loadIndex() async {
+    _have.clear();
+    final d = Directory(AppPaths.I.thumbs);
+    try {
+      if (await d.exists()) {
+        await for (final f in d.list()) {
+          if (f is File) _have.add(p.basename(f.path));
+        }
+      }
+    } catch (_) {}
+    _loaded = true;
+    version++;
+    notifyListeners();
   }
 
+  void forgetAll() {
+    _have.clear();
+    _failed.clear();
+    version++;
+    notifyListeners();
+  }
+
+  String nameFor(Title t) => '${t.fingerprint}_${t.coverPage}.jpg';
+  String fileFor(Title t) => p.join(AppPaths.I.thumbs, nameFor(t));
+
+  File? cached(Title t) => _have.contains(nameFor(t)) ? File(fileFor(t)) : null;
+  bool failed(Title t) => _failed.contains(nameFor(t)) || t.unreadable;
+
   Future<File?> get(Title t) {
+    final name = nameFor(t);
+    if (_have.contains(name)) return Future.value(File(fileFor(t)));
+    if (_failed.contains(name) || t.unreadable || t.missing || !_loaded) return Future.value(null);
     final path = fileFor(t);
-    final f = File(path);
-    if (f.existsSync()) return Future.value(f);
     return _pending.putIfAbsent(path, () {
       final c = Completer<File?>();
       _wait.insert(0, (t, c));
@@ -826,14 +873,23 @@ class Thumbs extends ChangeNotifier {
     });
   }
 
+  /// Covers asked for by the grid jump the queue; ones scrolled past are dropped.
+  void forgetRequestsExcept(Set<int> visibleIds) {
+    _wait.removeWhere((w) {
+      if (visibleIds.contains(w.$1.id)) return false;
+      w.$2.complete(null);
+      return true;
+    });
+  }
+
   void _pump() {
     while (_running < _workers && _wait.isNotEmpty) {
       final (t, c) = _wait.removeAt(0);
       _running++;
       _make(t).then((f) {
-        c.complete(f);
+        if (!c.isCompleted) c.complete(f);
       }).catchError((Object e) {
-        c.complete(null);
+        if (!c.isCompleted) c.complete(null);
       }).whenComplete(() {
         _running--;
         _pump();
@@ -843,23 +899,27 @@ class Thumbs extends ChangeNotifier {
 
   Future<File?> _make(Title t) async {
     if (t.missing || encoder == null) return null;
-    Book? book;
+    final name = nameFor(t);
     try {
-      book = await Book.open(t.path, cacheDir: AppPaths.I.pageCache, sevenZip: Library.I.sevenZip);
-      if (book.length == 0) return null;
-      final i = t.coverPage.clamp(0, book.length - 1);
-      final bytes = await book.page(i);
+      final bytes = await readOnePage(t.path, t.coverPage, sevenZip: Library.I.sevenZip, cacheDir: AppPaths.I.pageCache);
+      if (bytes == null) {
+        _failed.add(name);
+        return null;
+      }
       final jpg = await encoder!(bytes);
-      if (jpg == null) return null;
+      if (jpg == null) {
+        _failed.add(name);
+        return null;
+      }
       final out = fileFor(t);
       await writeFileSafely(out, jpg);
+      _have.add(name);
       version++;
       return File(out);
     } catch (e) {
+      _failed.add(name);
       AppLog.I.warn('Couldn\'t make a cover for ${t.fileName}: $e');
       return null;
-    } finally {
-      book?.close();
     }
   }
 
@@ -867,24 +927,29 @@ class Thumbs extends ChangeNotifier {
   void queueMissing(Section s) {
     final name = 'Making ${s.label} covers';
     if (Jobs.I.isQueued(name)) return;
-    final todo = Library.I.titles(s).where((t) => !t.missing && cached(t) == null).toList();
+    final todo = Library.I.titles(s).where((t) => !t.missing && !failed(t) && cached(t) == null).toList();
     if (todo.isEmpty) return;
     Jobs.I.add(Job(name, (job) async {
       job.progress(0, total: todo.length, detail: 'covers');
-      var done = 0;
-      for (final t in todo) {
+      var done = 0, made = 0;
+      // Several at once, one per worker.
+      for (var i = 0; i < todo.length; i += _workers) {
         if (!await job.checkpoint()) break;
-        if (cached(t) == null) await get(t);
-        done++;
-        job.progress(done, detail: t.displayTitle);
-        if (done % 40 == 0) notifyListeners();
+        final chunk = todo.sublist(i, min(i + _workers, todo.length));
+        final results = await Future.wait(chunk.map((t) => cached(t) != null ? Future.value(cached(t)) : _make(t)));
+        made += results.whereType<File>().length;
+        done += chunk.length;
+        job.progress(done, detail: chunk.last.displayTitle);
+        if (done % 60 < _workers) notifyListeners();
       }
       notifyListeners();
-      return '$done ${s.label} covers made';
+      final failedCount = done - made;
+      return '$made ${s.label} covers made${failedCount > 0 ? ' · $failedCount couldn\'t be made (listed in the log)' : ''}';
     }, canPause: true));
   }
 
   Future<int> cacheSize() async {
+    if (!_loaded) await loadIndex();
     var total = 0;
     final d = Directory(AppPaths.I.thumbs);
     if (!await d.exists()) return 0;
