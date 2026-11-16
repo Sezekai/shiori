@@ -194,6 +194,8 @@ class Library extends ChangeNotifier {
   final Map<int, Title> _byId = {};
   final Map<Section, LibFilter> filters = {for (final s in Section.values) s: LibFilter()};
   String? sevenZip;
+  /// After two unclean exits: no folder watching or background cover making.
+  bool safeMode = false;
   int _randomSeed = Random().nextInt(1 << 30);
   final List<StreamSubscription> _watchers = [];
   Timer? _watchDebounce;
@@ -614,7 +616,7 @@ class Library extends ChangeNotifier {
       }
     }
     notifyListeners();
-    Thumbs.I.queueMissing(s);
+    if (!safeMode) Thumbs.I.queueMissing(s);
     final missing = _titles[s]!.where((t) => t.missing).length;
     return '${s.label}: ${listed.length} files · $added new · $moved moved · $updated updated'
         '${failed > 0 ? ' · $failed couldn\'t be read' : ''}${missing > 0 ? ' · $missing not found' : ''}';
@@ -936,7 +938,7 @@ class Thumbs extends ChangeNotifier {
       for (var i = 0; i < todo.length; i += _workers) {
         if (!await job.checkpoint()) break;
         final chunk = todo.sublist(i, min(i + _workers, todo.length));
-        final results = await Future.wait(chunk.map((t) => cached(t) != null ? Future.value(cached(t)) : _make(t)));
+        final results = await Future.wait(chunk.map(get)); // shared with the grid, so a cover is never made twice at once
         made += results.whereType<File>().length;
         done += chunk.length;
         job.progress(done, detail: chunk.last.displayTitle);

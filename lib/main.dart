@@ -128,7 +128,10 @@ Future<void> main(List<String> args) async {
       await _runSelftest();
       return;
     }
-    if (safeMode) Settings.I.watchFolders = false;
+    if (safeMode) {
+      Settings.I.watchFolders = false;
+      Library.I.safeMode = true;
+    }
     // A quick rescan picks up anything added while Shiori was closed;
     // unchanged files are skipped, so this is fast.
     for (final s in Section.values) {
@@ -314,6 +317,20 @@ Future<void> _runSelftest() async {
     check(covers == 3, 'covers made ($covers of 3)');
     await Future<void>.delayed(const Duration(seconds: 1));
     await _screenshot('library');
+    // What crashed on Windows: accessibility switched on, layout changing fast.
+    final sem = WidgetsBinding.instance.ensureSemantics();
+    final ss = Settings.I.of(Section.manga);
+    for (var i = 0; i < 40; i++) {
+      ss.tileSize = i.isEven ? 110 : 420;
+      Settings.I.changedQuiet();
+      Library.I.changed();
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+    }
+    ss.tileSize = 180;
+    Settings.I.changedQuiet();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    sem.dispose();
+    check(true, 'survived rapid grid resizing with accessibility on');
     LibraryPageState.active?.selectFirst();
     await Future<void>.delayed(const Duration(milliseconds: 800));
     await _screenshot('library-panel');

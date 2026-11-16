@@ -102,7 +102,7 @@ class AppPaths {
 /// Writes a file safely: a temporary file first, then a rename over the old
 /// one, so a crash never leaves a half-written file.
 Future<void> writeFileSafely(String path, List<int> bytes) async {
-  final tmp = File('$path.tmp');
+  final tmp = File('$path.${DateTime.now().microsecondsSinceEpoch}.tmp');
   await tmp.parent.create(recursive: true);
   await tmp.writeAsBytes(bytes, flush: true);
   await tmp.rename(path);

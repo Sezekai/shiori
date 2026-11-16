@@ -124,6 +124,11 @@ class ShioriApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         title: 'Shiori',
         theme: Look.I.theme(),
+        // Flutter's Windows accessibility bridge crashes (access violation in
+        // AccessibilityBridge::CreateRemoveReparentedNodesUpdate) when a
+        // Windows tool turns it on and the grid's layout changes quickly.
+        // Shiori doesn't expose its controls to that bridge, so it stays off.
+        builder: (context, child) => ExcludeSemantics(child: child ?? const SizedBox()),
         home: home ?? const Shell(),
       ),
     );
