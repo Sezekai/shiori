@@ -75,6 +75,7 @@ Future<void> main(List<String> args) async {
   }
   marker.writeAsStringSync('$unclean');
   final safeMode = unclean >= 2;
+  if (unclean >= 1) _reportLastCrash();
   if (safeMode) {
     AppLog.I.warn('Shiori didn\'t close properly twice in a row, so folder watching and cover making are off for this run.');
   }
@@ -132,6 +133,12 @@ Future<void> main(List<String> args) async {
       if (Settings.I.of(s).folders.isNotEmpty) Library.I.scan(s);
     }
     Library.I.startWatching();
+    // A heartbeat in the log file: memory and what's running, every 30 seconds.
+    Timer.periodic(const Duration(seconds: 30), (_) {
+      final j = Jobs.I.current;
+      AppLog.I.fileOnly('Heartbeat · memory ${ProcessInfo.currentRss ~/ (1024 * 1024)} MB'
+          '${j == null ? ' · idle' : ' · ${j.name} ${j.done}/${j.total ?? '?'}'}');
+    });
     unawaited(trimPageCache(AppPaths.I.pageCache, 2 * 1024 * 1024 * 1024));
   });
 }
@@ -189,6 +196,44 @@ Future<Uint8List?> makeCover(Uint8List bytes) => Isolate.run(() {
       final small = im.width > 360 ? img.copyResize(im, width: 360, interpolation: img.Interpolation.average) : im;
       return img.encodeJpg(small, quality: 85);
     });
+
+/// The last run ended without closing properly: put the end of its log and
+/// Windows' crash record for Shiori.exe into this run's log.
+void _reportLastCrash() {
+  AppLog.I.warn('The last run of Shiori didn\'t close properly. Details follow in this log.');
+  try {
+    final prev = AppLog.I.previousFile;
+    if (prev != null) {
+      final lines = File(prev).readAsLinesSync();
+      AppLog.I.fileOnly('--- last lines of the previous run (${p.basename(prev)}) ---');
+      for (final l in lines.skip(lines.length > 40 ? lines.length - 40 : 0)) {
+        AppLog.I.fileOnly('  $l');
+      }
+    }
+  } catch (_) {}
+  if (!Platform.isWindows) return;
+  try {
+    final r = Process.runSync('wevtutil', [
+      'qe', 'Application', '/c:6', '/rd:true', '/f:text',
+      '/q:*[System[(Provider[@Name="Application Error"] or Provider[@Name="Windows Error Reporting"] or Provider[@Name=".NET Runtime"]) and TimeCreated[timediff(@SystemTime) <= 172800000]]]',
+    ]);
+    final text = (r.stdout as String);
+    final events = text.split(RegExp(r'Event\[\d+\]')).where((e) => e.toLowerCase().contains('shiori')).toList();
+    if (events.isEmpty) {
+      AppLog.I.fileOnly('Windows has no crash record for Shiori.exe from the last two days.');
+    } else {
+      AppLog.I.fileOnly('--- Windows crash record ---');
+      for (final l in events.first.split(RegExp(r'\r?\n')).where((l) => l.trim().isNotEmpty).take(40)) {
+        AppLog.I.fileOnly('  ${l.trimRight()}');
+      }
+      final fault = RegExp(r'Faulting module name: ([^,\r\n]+)|Exception code: (0x[0-9a-fA-F]+)').allMatches(events.first)
+          .map((m) => m.group(0)).join(' · ');
+      if (fault.isNotEmpty) AppLog.I.warn('Windows says: $fault');
+    }
+  } catch (e) {
+    AppLog.I.fileOnly('Couldn\'t read Windows\' crash record: $e');
+  }
+}
 
 /// After "Move…" of the data folder: the new place is in use, so the old copy goes.
 void _finishDataMove() {

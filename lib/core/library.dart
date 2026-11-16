@@ -520,7 +520,7 @@ class Library extends ChangeNotifier {
         AppLog.I.warn('${s.label}: the folder $root can\'t be reached. Is its drive connected?');
         continue;
       }
-      final files = await Isolate.run(() => _listBooks(root, excluded));
+      final files = await _listInBackground(root, excluded);
       for (final f in files) {
         listed[f.$1] = (f.$2, f.$3, root);
       }
@@ -557,10 +557,12 @@ class Library extends ChangeNotifier {
     var added = 0, moved = 0, updated = 0, failed = 0;
     job.progress(0, total: total, detail: total == 0 ? 'Nothing new' : 'Reading new and changed files');
     const batchSize = 24;
+    var lastRefresh = DateTime.now();
     for (var i = 0; i < toInspect.length; i += batchSize) {
       if (!await job.checkpoint()) break;
       final batch = toInspect.sublist(i, min(i + batchSize, toInspect.length));
-      final infos = await Isolate.run(() => batch.map((x) => inspectFile(x, sz)).toList());
+      AppLog.I.fileOnly('Scan ${s.label}: files ${i + 1}–${i + batch.length} of $total · memory ${ProcessInfo.currentRss ~/ (1024 * 1024)} MB · ${p.basename(batch.first)}');
+      final infos = await _inspectInBackground(batch, sz);
       Db.I.raw.execute('BEGIN');
       for (final info in infos) {
         final root = listed[info.path]!.$3;
@@ -589,7 +591,10 @@ class Library extends ChangeNotifier {
       }
       Db.I.raw.execute('COMMIT');
       job.progress(done, detail: p.basename(batch.last));
-      if (done % (batchSize * 8) == 0) notifyListeners();
+      if (DateTime.now().difference(lastRefresh).inSeconds >= 3) {
+        lastRefresh = DateTime.now();
+        notifyListeners();
+      }
     }
     notifyListeners();
     Thumbs.I.queueMissing(s);
@@ -778,6 +783,13 @@ class Library extends ChangeNotifier {
     load();
   }
 }
+
+// Top-level so the background isolate is sent only these arguments.
+Future<List<(String, int, int)>> _listInBackground(String root, Set<String> excluded) =>
+    Isolate.run(() => Library._listBooks(root, excluded));
+
+Future<List<FileInfo>> _inspectInBackground(List<String> paths, String? sevenZip) =>
+    Isolate.run(() => [for (final x in paths) inspectFile(x, sevenZip)]);
 
 /// Cover thumbnails, cached on disk (Cache\thumbs).
 class Thumbs extends ChangeNotifier {

@@ -340,8 +340,10 @@ ParsedName parseArtBook(String fileName) {
 }
 
 /// Natural order: "2" before "10", "042 -" before "043 -", case ignored.
+final _naturalParts = RegExp(r'(\d+)|(\D+)');
+
 int naturalCompare(String a, String b) {
-  final ra = RegExp(r'(\d+)|(\D+)');
+  final ra = _naturalParts;
   final ta = ra.allMatches(a.toLowerCase()).map((m) => m.group(0)!).toList();
   final tb = ra.allMatches(b.toLowerCase()).map((m) => m.group(0)!).toList();
   for (var i = 0; i < ta.length && i < tb.length; i++) {
