@@ -1,3 +1,9 @@
+# Shiori 1.3.1
+
+The phone app is now signed with Shiori's own key, so every future version installs over the last one and keeps your downloads and settings. **Install this one rather than 1.3.0.** If you already installed 1.3.0, uninstall it first (once only); the library and covers come back on the next sync.
+
+---
+
 # Shiori 1.3.0: the phone app
 
 This release adds **Shiori for Android** (`Shiori-v1.3.0-android.apk`) alongside the Windows app.
