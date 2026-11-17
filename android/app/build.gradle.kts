@@ -15,7 +15,6 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.sezekai.shiori"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -29,11 +28,24 @@ android {
         versionName = flutter.versionName
     }
 
+    // Releases are signed with the key kept in the repo's secrets, so each new
+    // version installs over the last one. Without it (local builds), the
+    // debug key is used.
+    val keyFile = System.getenv("SHIORI_KEYSTORE")
+    signingConfigs {
+        if (keyFile != null && file(keyFile).exists()) {
+            create("release") {
+                storeFile = file(keyFile)
+                storePassword = System.getenv("SHIORI_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SHIORI_KEY_ALIAS") ?: "shiori"
+                keyPassword = System.getenv("SHIORI_KEY_PASSWORD") ?: System.getenv("SHIORI_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keyFile != null && file(keyFile).exists()) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
 }

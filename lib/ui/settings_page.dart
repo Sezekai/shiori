@@ -11,6 +11,7 @@ import '../core/jobs.dart';
 import '../core/library.dart';
 import '../core/log.dart';
 import '../core/paths.dart';
+import '../core/server.dart';
 import '../core/settings.dart';
 import '../core/yacreader.dart';
 import 'widgets.dart';
@@ -171,6 +172,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Text(Library.I.sevenZip == null ? '7-Zip wasn\'t found, so CBR files can\'t be opened.' : '7-Zip: ${Library.I.sevenZip}',
                     style: ts(c: Library.I.sevenZip == null ? tk.warn : tk.faint, size: 12)),
               ]),
+              _phoneGroup(),
               _group('Storage', 'Everywhere Shiori keeps things, and how much space each uses.', [
                 for (final pl in _places()) _storageRow(pl),
               ]),
@@ -203,6 +205,99 @@ class _SettingsPageState extends State<SettingsPage> {
         ]),
       ),
     );
+  }
+
+  Widget _phoneGroup() => ListenableBuilder(
+        listenable: ShioriServer.I,
+        builder: (context, _) {
+          final srv = ShioriServer.I;
+          final devices = Db.I.devices();
+          final now = srv.connectedNow;
+          return _group('Phone', 'Lets the Shiori phone app read your library over your home WiFi, download titles, and sync reading back.', [
+            _check('Let the phone app connect', Settings.I.get<bool>('server.on', false), (v) {
+              Settings.I.extra['server.on'] = v;
+              v ? srv.start() : srv.stop();
+            }),
+            if (srv.error != null) Text(srv.error!, style: ts(c: tk.warn, size: 12)),
+            if (srv.running) ...[
+              FutureBuilder<List<String>>(
+                future: srv.addresses(),
+                builder: (_, a) => Text(
+                    'On. The phone finds this PC by itself on the same WiFi. If it can\'t, type ${a.data?.isNotEmpty == true ? a.data!.map((x) => '$x:${srv.port}').join(' or ') : 'this PC\'s address'} on the phone. '
+                    'Windows may ask once to let Shiori through the firewall: allow it on private networks.',
+                    style: ts(c: tk.sec, size: 12)),
+              ),
+              const SizedBox(height: 6),
+              _check('Shrink very large pages to the phone\'s screen when streaming (faster; downloads are always original)',
+                  Settings.I.get<bool>('server.shrink', false), (v) => Settings.I.extra['server.shrink'] = v),
+              const SizedBox(height: 6),
+              Row(children: [
+                Btn.primary('Pair a phone', icon: Icons.phonelink_lock_outlined, onTap: () => _pairDialog(context)),
+                const SizedBox(width: 10),
+                if (now.isNotEmpty) Text('Connected now: ${now.join(', ')}', style: ts(c: tk.ok)),
+              ]),
+            ],
+            const SizedBox(height: 8),
+            if (devices.isEmpty)
+              Text('No phones paired yet.', style: ts(c: tk.faint))
+            else
+              for (final d in devices)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(children: [
+                    Icon(Icons.smartphone, size: 16, color: tk.sec),
+                    const SizedBox(width: 8),
+                    SizedBox(width: 220, child: Text(d['name'] as String, style: ts(w: FontWeight.w600))),
+                    Text('Paired ${dateText(d['paired_at'] as int)}'
+                        '${(d['last_seen'] as int? ?? 0) > 0 ? ' · last seen ${dateText(d['last_seen'] as int)}' : ''}',
+                        style: ts(c: tk.sec)),
+                    const SizedBox(width: 10),
+                    Btn.ghost('Remove', dense: true, onTap: () async {
+                      if (await confirm(context, 'Remove ${d['name']}?',
+                          'That phone will need to be paired again before it can connect. Anything it already synced stays.',
+                          confirmLabel: 'Remove phone')) {
+                        Db.I.removeDevice(d['id'] as int);
+                        setState(() {});
+                      }
+                    }),
+                  ]),
+                ),
+            if (srv.activity.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('Recent', style: ts(c: tk.faint, size: 12)),
+              for (final a in srv.activity.take(6)) Text(a, style: ts(c: tk.sec, size: 12, mono: true)),
+            ],
+          ]);
+        },
+      );
+
+  Future<void> _pairDialog(BuildContext context) async {
+    final before = Db.I.devices().length;
+    final code = ShioriServer.I.startPairing();
+    await showDialog<void>(
+      context: context,
+      builder: (c) => ListenableBuilder(
+        listenable: ShioriServer.I,
+        builder: (c, _) {
+          final paired = Db.I.devices().length > before;
+          return AppDialog(
+            title: paired ? 'Phone paired' : 'Pair a phone',
+            body: paired
+                ? Text('${Db.I.devices().last['name']} can now connect.', style: ts())
+                : Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('On the phone, open Shiori and choose Connect to PC, then enter this code:', style: ts(c: tk.sec)),
+                    const SizedBox(height: 14),
+                    Center(child: Text('${code.substring(0, 3)} ${code.substring(3)}', style: ts(size: 40, w: FontWeight.w700, tab: true))),
+                    const SizedBox(height: 10),
+                    Text('The code works for 5 minutes.', style: ts(c: tk.faint, size: 12)),
+                  ]),
+            actions: [Btn.primary(paired ? 'Done' : 'Cancel', onTap: () => Navigator.pop(c))],
+          );
+        },
+      ),
+    );
+    ShioriServer.I.stopPairing();
+    if (mounted) setState(() {});
   }
 
   Widget _group(String title, String desc, List<Widget> children) => Container(

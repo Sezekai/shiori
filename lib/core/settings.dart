@@ -173,6 +173,19 @@ class Settings extends ChangeNotifier {
   /// Remembered sizes: list columns ("table.column") and panels.
   Map<String, double> widths = {};
 
+  /// Smaller settings kept as plain values: the phone server on the PC, and
+  /// everything phone-only on the phone.
+  Map<String, dynamic> extra = {};
+  T get<T>(String key, T fallback) {
+    final v = extra[key];
+    return v is T ? v : fallback;
+  }
+
+  void put(String key, Object? value) {
+    extra[key] = value;
+    save();
+  }
+
   double width(String key, double fallback) => widths[key] ?? fallback;
   void setWidth(String key, double v) {
     widths[key] = v;
@@ -207,6 +220,7 @@ class Settings extends ChangeNotifier {
       windowState = (m['window'] as Map?)?.cast<String, dynamic>() ?? {};
       sidePanelWidth = (m['sidePanelWidth'] as num?)?.toDouble() ?? 292;
       widths = ((m['widths'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toDouble()));
+      extra = ((m['extra'] as Map?) ?? {}).cast<String, dynamic>();
     } catch (_) {}
   }
 
@@ -225,6 +239,7 @@ class Settings extends ChangeNotifier {
         'window': windowState,
         'sidePanelWidth': sidePanelWidth,
         'widths': widths,
+        'extra': extra,
       };
 
   /// Changes apply straight away; there's no Save button.

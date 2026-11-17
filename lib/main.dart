@@ -19,6 +19,8 @@ import 'core/jobs.dart';
 import 'core/library.dart';
 import 'core/log.dart';
 import 'core/paths.dart';
+import 'core/server.dart';
+import 'mobile/mobile_app.dart';
 import 'core/settings.dart';
 import 'ui/app.dart';
 import 'ui/library_page.dart';
@@ -30,6 +32,7 @@ const _instancePort = 47613;
 final GlobalKey _shotKey = GlobalKey();
 
 Future<void> main(List<String> args) async {
+  if (isMobile) return runMobile();
   final selftest = args.contains('--selftest') || Platform.environment['SHIORI_SELFTEST'] == '1';
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -87,6 +90,7 @@ Future<void> main(List<String> args) async {
     AppLog.I.warn('The cache folder ${AppPaths.I.cache} can\'t be reached. Is its drive connected? Covers won\'t be saved until it is.');
   }
   Library.I.load();
+  if (Settings.I.get<bool>('server.on', false)) unawaited(ShioriServer.I.start());
   Thumbs.I.encoder = makeCover;
   await Thumbs.I.loadIndex().timeout(const Duration(seconds: 15), onTimeout: () {});
 
@@ -387,6 +391,59 @@ Future<void> _runSelftest() async {
     await Future<void>.delayed(const Duration(milliseconds: 500));
     await _screenshot('keys');
     Nav.I.toggle('keys');
+    // The phone server: pairing, the library, a page, a download.
+    await ShioriServer.I.start();
+    check(ShioriServer.I.running, 'phone server started on port ${ShioriServer.I.port}');
+    final code = ShioriServer.I.startPairing();
+    final http = HttpClient();
+    Future<(int, String)> call(String method, String path, {Object? body, String? token}) async {
+      final rq = await http.openUrl(method, Uri.parse('http://127.0.0.1:${ShioriServer.I.port}$path'));
+      if (token != null) rq.headers.set('Authorization', 'Bearer $token');
+      if (body != null) rq.write(jsonEncode(body));
+      final rs = await rq.close();
+      final b = await rs.fold<List<int>>([], (a, c) => a..addAll(c));
+      return (rs.statusCode, path.startsWith('/api/page/') || path.startsWith('/api/download/') ? '${b.length}' : utf8.decode(b));
+    }
+
+    final bad = await call('POST', '/api/pair', body: {'code': '000000', 'device': 'Test'});
+    check(bad.$1 == 403, 'pairing refuses a wrong code');
+    final pr = await call('POST', '/api/pair', body: {'code': code, 'device': 'Selftest phone'});
+    final token = (jsonDecode(pr.$2) as Map)['token'] as String?;
+    check(pr.$1 == 200 && token != null, 'pairing with the right code gives a token');
+    check((await call('GET', '/api/snapshot')).$1 == 401, 'unpaired requests are refused');
+    final snap = jsonDecode((await call('GET', '/api/snapshot', token: token)).$2) as Map;
+    check((snap['titles'] as List).length == titles.length, 'snapshot has every title (${(snap['titles'] as List).length})');
+    final firstId = titles.first.id;
+    final pg = await call('GET', '/api/page/$firstId/0', token: token);
+    check(pg.$1 == 200 && int.parse(pg.$2) > 1000, 'a page streams (${pg.$2} bytes)');
+    final dl = await call('GET', '/api/download/$firstId', token: token);
+    check(dl.$1 == 200 && int.parse(dl.$2) == File(titles.first.path).lengthSync(), 'a CBZ downloads whole (${dl.$2} bytes)');
+    final t0 = Library.I.byId(firstId)!;
+    final before = t0.readCount;
+    final sync = jsonDecode((await call('POST', '/api/sync', token: token, body: {
+      'changes': [
+        {'uid': 'test-c1', 'kind': 'completion', 'title_uid': t0.uid, 'payload': {'uid': 'test-comp-1', 'at': nowSec()}},
+        {'uid': 'test-c2', 'kind': 'rating', 'title_uid': t0.uid, 'payload': {'rating': 4.5}},
+      ],
+    })).$2) as Map;
+    check((sync['applied'] as List).length == 2 && t0.readCount == before + 1 && t0.rating == 4.5, 'phone changes are applied');
+    await call('POST', '/api/sync', token: token, body: {
+      'changes': [
+        {'uid': 'test-c1', 'kind': 'completion', 'title_uid': t0.uid, 'payload': {'uid': 'test-comp-1', 'at': nowSec()}},
+      ],
+    });
+    check(t0.readCount == before + 1, 'sending the same change twice counts once');
+    // Keep serving for the phone test, when asked to.
+    final stay = Platform.environment['SHIORI_STAY_FOR_PHONE'];
+    if (stay != null) {
+      File(stay).writeAsStringSync(jsonEncode({'token': token, 'port': ShioriServer.I.port}));
+      AppLog.I.info('Self-test: serving the phone test, token written to $stay');
+      while (!File('$stay.done').existsSync()) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+      check(Db.I.sessions().any((s) => s.device == 'Phone'), 'a reading session from the phone arrived');
+      check(Db.I.raw.select("SELECT 1 FROM saved_pages").length >= 2, 'pages saved from the phone');
+    }
     check(AppLog.I.errorCount == 0, 'no errors logged (${AppLog.I.errorCount})');
   } catch (e, st) {
     ok = false;

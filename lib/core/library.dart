@@ -207,9 +207,14 @@ class Library extends ChangeNotifier {
   Title? byId(int id) => _byId[id];
   Tag? tagById(Section s, int id) => _tags[s]!.where((t) => t.id == id).firstOrNull;
 
+  /// Set on the phone: every change made by hand is also queued for the PC.
+  void Function(String kind, Title t, Map<String, Object?> payload)? onChange;
+  bool mobile = false;
+
   void load() {
-    sevenZip = findSevenZip();
-    if (sevenZip == null) {
+    sevenZip = mobile ? null : findSevenZip();
+    if (mobile) {
+    } else if (sevenZip == null) {
       AppLog.I.warn('7-Zip wasn\'t found, so CBR files can\'t be opened.');
     } else {
       AppLog.I.info('Using 7-Zip at $sevenZip');
@@ -442,6 +447,7 @@ class Library extends ChangeNotifier {
   void setRating(Title t, double r) {
     t.rating = r;
     Db.I.updateReading(t);
+    onChange?.call('rating', t, {'rating': r});
     notifyListeners();
   }
 
@@ -450,6 +456,7 @@ class Library extends ChangeNotifier {
     for (final t in ts) {
       t.favourite = v;
       Db.I.updateReading(t);
+      onChange?.call('favourite', t, {'value': v});
     }
     notifyListeners();
   }
@@ -459,6 +466,7 @@ class Library extends ChangeNotifier {
     final now = nowSec();
     Db.I.raw.execute('BEGIN');
     for (final t in ts) {
+      if (read != t.isRead || !read) onChange?.call('mark', t, {'read': read, 'at': now});
       if (read) {
         if (t.isRead) continue;
         Db.I.addCompletion(t.id, now, manual: true);
@@ -509,11 +517,17 @@ class Library extends ChangeNotifier {
 
   void addTag(Tag tag, Iterable<Title> ts) {
     Db.I.addToTag(tag.id, ts.map((t) => t.id));
+    for (final t in ts) {
+      onChange?.call('tag', t, {'tag': tag.id, 'name': tag.name, 'add': true});
+    }
     reloadTags(tag.section);
   }
 
   void removeTag(Tag tag, Iterable<Title> ts) {
     Db.I.removeFromTag(tag.id, ts.map((t) => t.id));
+    for (final t in ts) {
+      onChange?.call('tag', t, {'tag': tag.id, 'name': tag.name, 'add': false});
+    }
     reloadTags(tag.section);
   }
 
@@ -854,6 +868,18 @@ class Thumbs extends ChangeNotifier {
   }
 
   String nameFor(Title t) => '${t.fingerprint}_${t.coverPage}.jpg';
+
+  /// File names of every cover made so far.
+  Set<String> get names => _have;
+
+  void refresh() => notifyListeners();
+
+  /// A cover that arrived from elsewhere (the phone gets them from the PC).
+  void added(String name) {
+    _have.add(name);
+    _failed.remove(name);
+    version++;
+  }
   String fileFor(Title t) => p.join(AppPaths.I.thumbs, nameFor(t));
 
   File? cached(Title t) => _have.contains(nameFor(t)) ? File(fileFor(t)) : null;

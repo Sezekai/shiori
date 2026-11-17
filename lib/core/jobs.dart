@@ -141,6 +141,20 @@ class Jobs extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Stops one job: drops it from the queue, or stops it if it's running.
+  void cancel(Job job) {
+    if (current == job) {
+      job.cancelled = true;
+      if (job.paused) {
+        job.paused = false;
+        job._resume?.complete();
+      }
+    } else {
+      queue.remove(job);
+    }
+    notifyListeners();
+  }
+
   void togglePause() {
     final c = current;
     if (c == null || !c.canPause) return;

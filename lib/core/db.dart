@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -304,6 +305,50 @@ ALTER TABLE titles ADD COLUMN cover_zoom REAL DEFAULT 1;
 PRAGMA user_version = 2;
 ''');
     }
+    if (v < 3) {
+      raw.execute('''
+CREATE TABLE IF NOT EXISTS devices(
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  paired_at INTEGER NOT NULL, last_seen INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS downloads(
+  title_uid TEXT PRIMARY KEY, title_id INTEGER, path TEXT NOT NULL, size INTEGER NOT NULL, at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS changes_uid ON changes(uid);
+PRAGMA user_version = 3;
+''');
+    }
+  }
+
+  // ---------- paired phones (PC) ----------
+
+  List<Map<String, Object?>> devices() =>
+      raw.select('SELECT id,name,paired_at,last_seen FROM devices ORDER BY paired_at').map((r) => Map.of(r)).toList();
+  void addDevice(String name, String tokenHash) =>
+      raw.execute('INSERT INTO devices(name,token_hash,paired_at) VALUES(?,?,?)', [name, tokenHash, nowSec()]);
+  String? deviceForToken(String tokenHash) {
+    final r = raw.select('SELECT id,name FROM devices WHERE token_hash=?', [tokenHash]);
+    if (r.isEmpty) return null;
+    raw.execute('UPDATE devices SET last_seen=? WHERE id=?', [nowSec(), r.first['id']]);
+    return r.first['name'] as String;
+  }
+  void removeDevice(int id) => raw.execute('DELETE FROM devices WHERE id=?', [id]);
+
+  // ---------- change log ----------
+  // On the phone: changes waiting to go to the PC. On the PC: the uids of
+  // changes already applied, so sending the same one twice does nothing.
+
+  void addChange(String uid, String kind, String? titleUid, Map<String, Object?> payload, {int? at}) =>
+      raw.execute('INSERT INTO changes(uid,at,kind,title_uid,payload) VALUES(?,?,?,?,?)',
+          [uid, at ?? nowSec(), kind, titleUid, jsonEncode(payload)]);
+  bool hasChange(String uid) => raw.select('SELECT 1 FROM changes WHERE uid=? LIMIT 1', [uid]).isNotEmpty;
+  List<Map<String, Object?>> pendingChanges({String? kind}) => (kind == null
+          ? raw.select('SELECT * FROM changes ORDER BY id')
+          : raw.select('SELECT * FROM changes WHERE kind=? ORDER BY id', [kind]))
+      .map((r) => {...r, 'payload': jsonDecode(r['payload'] as String? ?? '{}')})
+      .toList();
+  void dropChanges(Iterable<String> uids) {
+    for (final u in uids) {
+      raw.execute('DELETE FROM changes WHERE uid=?', [u]);
+    }
   }
 
   // ---------- titles ----------
@@ -361,7 +406,7 @@ PRAGMA user_version = 2;
 
   // ---------- reading records ----------
 
-  void addSession({
+  String addSession({
     required int titleId,
     required int startedAt,
     required int endedAt,
@@ -372,17 +417,47 @@ PRAGMA user_version = 2;
     required bool completed,
     String device = 'PC',
     String source = 'pc',
+    String? uid,
   }) {
+    final id = uid ?? newUid();
     raw.execute(
         '''INSERT INTO sessions(uid,title_id,started_at,ended_at,active_seconds,from_page,to_page,
         pages_seen,completed,device,source) VALUES(?,?,?,?,?,?,?,?,?,?,?)''',
-        [newUid(), titleId, startedAt, endedAt, activeSeconds, fromPage, toPage, pagesSeen,
+        [id, titleId, startedAt, endedAt, activeSeconds, fromPage, toPage, pagesSeen,
           completed ? 1 : 0, device, source]);
+    return id;
   }
 
-  void addCompletion(int titleId, int at, {bool manual = false, String source = 'pc'}) {
+  String addCompletion(int titleId, int at, {bool manual = false, String source = 'pc', String? uid}) {
+    final id = uid ?? newUid();
     raw.execute('INSERT INTO completions(uid,title_id,at,manual,source) VALUES(?,?,?,?,?)',
-        [newUid(), titleId, at, manual ? 1 : 0, source]);
+        [id, titleId, at, manual ? 1 : 0, source]);
+    return id;
+  }
+
+  bool hasSession(String uid) => raw.select('SELECT 1 FROM sessions WHERE uid=?', [uid]).isNotEmpty;
+  bool hasCompletion(String uid) => raw.select('SELECT 1 FROM completions WHERE uid=?', [uid]).isNotEmpty;
+  Title? titleByUid(String uid) {
+    final r = raw.select('SELECT * FROM titles WHERE uid = ?', [uid]);
+    return r.isEmpty ? null : Title.fromRow(r.first);
+  }
+
+  /// Rows of a table as plain maps, for sending to the phone.
+  List<Map<String, Object?>> rows(String table) => raw.select('SELECT * FROM $table').map((r) => Map.of(r)).toList();
+
+  /// Replaces a table's contents with [rows] (the phone's copy of the PC).
+  void replaceRows(String table, List<Map<String, Object?>> rows) {
+    raw.execute('DELETE FROM $table');
+    if (rows.isEmpty) return;
+    final cols = rows.first.keys.toList();
+    final stmt = raw.prepare('INSERT INTO $table(${cols.join(',')}) VALUES(${List.filled(cols.length, '?').join(',')})');
+    try {
+      for (final r in rows) {
+        stmt.execute([for (final c in cols) r[c]]);
+      }
+    } finally {
+      stmt.close();
+    }
   }
 
   void removeManualCompletions(int titleId) {

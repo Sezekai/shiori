@@ -27,6 +27,17 @@ class AppPaths {
   String get thumbs => p.join(cache, 'thumbs');
   String get pageCache => p.join(cache, 'pages');
 
+  /// The phone: everything inside the app's own storage.
+  static AppPaths at({required String data, required String cache}) {
+    final paths = AppPaths._(data, data, cache);
+    for (final d in [data, paths.logs, paths.backups, cache, paths.thumbs, paths.pageCache]) {
+      try {
+        Directory(d).createSync(recursive: true);
+      } catch (_) {}
+    }
+    return paths;
+  }
+
   static String pointerFileFor(String defaultData) =>
       p.join(defaultData, 'location.json');
 
