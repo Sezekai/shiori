@@ -1,8 +1,10 @@
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart' hide Title;
 
 import '../core/db.dart';
 import '../core/library.dart';
 import '../core/settings.dart';
+import 'app.dart';
 import 'covers.dart';
 import 'look.dart';
 import 'widgets.dart';
@@ -260,7 +262,7 @@ class _TagsViewState extends State<TagsView> {
                       entry: entries[i],
                       style: 'comfortable',
                       width: Settings.I.of(s).tileSize,
-                      radius: Settings.I.of(s).coverRadius,
+                      radius: Look.I.coverRadius,
                       fill: Settings.I.of(s).coverFill,
                       selected: false,
                       ticked: false,
@@ -326,36 +328,110 @@ class _ArtistsViewState extends State<ArtistsView> {
       ]),
       const SizedBox(height: 8),
       Expanded(
-        child: Container(
-          decoration: BoxDecoration(color: tk.field, borderRadius: BorderRadius.circular(lk.rPanel), border: Border.all(color: tk.line)),
-          child: ListView.builder(
-            itemCount: list.length,
-            itemExtent: lk.hRow + 10,
-            itemBuilder: (_, i) {
-              final e = list[i];
-              final read = e.value.where((t) => t.isRead).length;
-              final a = avg(e.value);
-              return Hoverable(
-                builder: (h) => GestureDetector(
-                  onTap: () => widget.onPick(e.key),
-                  child: Container(
-                    color: h ? tk.raised : null,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(children: [
-                      Expanded(child: Text(e.key, style: ts(w: FontWeight.w600), overflow: TextOverflow.ellipsis)),
-                      SizedBox(width: 100, child: Text('${e.value.length} titles', style: ts(c: tk.sec, tab: true))),
-                      SizedBox(width: 100, child: Text('$read read', style: ts(c: tk.sec, tab: true))),
-                      SizedBox(width: 110, child: a > 0 ? Stars(value: (a * 2).round() / 2, size: 13) : const SizedBox()),
-                      SizedBox(width: 120, child: Progress(value: read / e.value.length, height: 4)),
-                    ]),
-                  ),
+        child: Focus(
+          focusNode: _keys,
+          onKeyEvent: (node, ev) {
+            if (ev is! KeyDownEvent || typingInField || list.isEmpty) return KeyEventResult.ignored;
+            final k = ev.logicalKey;
+            int? move;
+            if (k == LogicalKeyboardKey.arrowDown) move = 1;
+            if (k == LogicalKeyboardKey.arrowUp) move = -1;
+            if (k == LogicalKeyboardKey.pageDown) move = 10;
+            if (k == LogicalKeyboardKey.pageUp) move = -10;
+            if (move != null) {
+              final i = cursor < 0 ? 0 : (cursor + move).clamp(0, list.length - 1);
+              setState(() => cursor = i);
+              if (_scroll.hasClients) {
+                final ext = lk.hRow + 10, pos = _scroll.position, top = i * ext;
+                if (top < pos.pixels) _scroll.jumpTo(top);
+                if (top + ext > pos.pixels + pos.viewportDimension) {
+                  _scroll.jumpTo((top + ext - pos.viewportDimension).clamp(0, pos.maxScrollExtent));
+                }
+              }
+              return KeyEventResult.handled;
+            }
+            if ((k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter) && cursor >= 0 && cursor < list.length) {
+              widget.onPick(list[cursor].key);
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: Container(
+            decoration: BoxDecoration(color: tk.field, borderRadius: BorderRadius.circular(lk.rPanel), border: Border.all(color: tk.line)),
+            clipBehavior: Clip.antiAlias,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ListenableBuilder(
+                listenable: Settings.I,
+                builder: (_, _) => SizedBox(
+                  width: 24 + _cols.cols.fold<double>(0, (a, c) => a + _cols.w(c)),
+                  child: Column(children: [
+                    Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: _cols.header()),
+                    Expanded(
+                      child: ListView.builder(
+                        controller: _scroll,
+                        itemCount: list.length,
+                        itemExtent: lk.hRow + 10,
+                        itemBuilder: (_, i) {
+                          final e = list[i];
+                          final read = e.value.where((t) => t.isRead).length;
+                          final a = avg(e.value);
+                          return Hoverable(
+                            builder: (h) => GestureDetector(
+                              onTap: () => widget.onPick(e.key),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: rowColor(i, hover: h, cursor: cursor == i),
+                                  border: cursor == i ? Border(left: BorderSide(color: lk.acc, width: 3)) : null,
+                                ),
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                child: _cols.row([
+                                  Text(e.key, style: ts(w: FontWeight.w600), overflow: TextOverflow.ellipsis),
+                                  Text('${e.value.length}', style: ts(c: tk.sec, tab: true)),
+                                  Text('$read', style: ts(c: tk.sec, tab: true)),
+                                  a > 0 ? Stars(value: (a * 2).round() / 2, size: 13) : const SizedBox(),
+                                  Progress(value: read / e.value.length, height: 4),
+                                ]),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ]),
                 ),
-              );
-            },
+              ),
+            ),
           ),
         ),
       ),
     ]);
+  }
+
+  static const _cols = ColumnSet('artists', [
+    Col('name', 'Artist', 360, min: 120),
+    Col('titles', 'Titles', 80),
+    Col('read', 'Read', 80),
+    Col('rating', 'Average rating', 120),
+    Col('progress', 'Progress', 130),
+  ]);
+  final FocusNode _keys = FocusNode(debugLabel: 'artists');
+  final ScrollController _scroll = ScrollController();
+  int cursor = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _keys.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _keys.dispose();
+    _scroll.dispose();
+    super.dispose();
   }
 }
 
@@ -396,8 +472,8 @@ class _CheckTitlesViewState extends State<CheckTitlesView> {
             final t = list[i];
             final c = _ctl.putIfAbsent(t.id, () => TextEditingController(text: t.displayTitle));
             return Container(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: tk.line))),
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+              decoration: BoxDecoration(color: rowColor(i), border: Border(bottom: BorderSide(color: tk.line))),
               child: Row(children: [
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

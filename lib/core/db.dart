@@ -521,16 +521,22 @@ PRAGMA user_version = 2;
 
   // ---------- saved pages ----------
 
-  SavedPage? savedByHash(String hash) {
-    final r = raw.select('SELECT * FROM saved_pages WHERE image_hash=? LIMIT 1', [hash]);
+  /// A save of this image from this title (chapter), if there is one.
+  SavedPage? savedByHash(String hash, {int? titleId}) {
+    final r = titleId == null
+        ? raw.select('SELECT * FROM saved_pages WHERE image_hash=? ORDER BY at DESC LIMIT 1', [hash])
+        : raw.select('SELECT * FROM saved_pages WHERE image_hash=? AND title_id=? ORDER BY at DESC LIMIT 1', [hash, titleId]);
     if (r.isEmpty) return null;
     final x = r.first;
     return SavedPage(x['id'] as int, x['title_id'] as int? ?? 0, x['pages'] as String,
         x['image_hash'] as String, x['at'] as int, x['path'] as String);
   }
 
-  Set<String> savedHashes() =>
-      raw.select('SELECT image_hash FROM saved_pages').map((r) => r['image_hash'] as String).toSet();
+  Set<String> savedHashes({int? titleId}) => (titleId == null
+          ? raw.select('SELECT image_hash FROM saved_pages')
+          : raw.select('SELECT image_hash FROM saved_pages WHERE title_id=?', [titleId]))
+      .map((r) => r['image_hash'] as String)
+      .toSet();
 
   void addSaved(int titleId, String pages, String hash, String path, String format) =>
       raw.execute('INSERT INTO saved_pages(title_id,pages,image_hash,at,path,format) VALUES(?,?,?,?,?,?)',

@@ -16,7 +16,7 @@ void main() {
     arc.addFile(ArchiveFile.bytes('__MACOSX/p1.jpg', [1, 2, 3]));
     final path = '${dir.path}/a.cbz';
     File(path).writeAsBytesSync(ZipEncoder().encodeBytes(arc));
-    final info = inspectFile(path, null);
+    final info = await inspectFile(path, null);
     expect(info.pages, 3);
     expect(info.kind, 'zip');
     final sw = Stopwatch()..start();

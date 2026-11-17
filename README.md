@@ -74,20 +74,31 @@ Press **K** in the app for the full list.
 | M | Show or hide the sidebar |
 | L | Log |
 | S | Settings |
-| 1 2 3 | Manga, Comics, Art Books |
+| 1 2 3 | Comics, Art Books, Manga |
+| **Library** | |
+| Arrows, PgUp PgDn | Move the highlight |
+| Enter, click | Open (a series opens its page) |
+| Space, middle-click | Show details on the right |
+| D | Show or hide the details panel |
+| Ctrl+click, Shift+click | Tick one, tick a range |
 | R | Random title |
 | Ctrl+A | Tick everything shown |
+| **Reader** | |
 | ← → | Previous / next page, following the reading direction |
-| PgUp PgDn, Space | Previous / next page |
+| PgUp PgDn | Previous / next page |
+| Space | Show or hide the controls |
 | Home End | First / last page |
 | ↑ ↓ | Zoom (scroll in strip mode) |
 | 0, 1 | Fit; actual size |
-| D, O, C | Two pages, cover offset, crop borders |
+| T, O, C | Two pages, cover offset, crop borders |
+| D | Details |
 | P | Save page |
 | V | Favourite |
 | N | Next file |
 | G | Page strip |
-| Esc | Close, innermost first |
+| Esc, mouse back | Close, innermost first |
+| **Dialogs** | |
+| ← →, Enter, Esc | Pick a button, press it, cancel |
 
 ## For the developer
 

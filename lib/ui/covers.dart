@@ -123,7 +123,11 @@ class CoverCard extends StatelessWidget {
     required this.onTap,
     required this.onTick,
     this.onMenu,
+    this.onMiddle,
+    this.cursor = false,
   });
+  final VoidCallback? onMiddle;
+  final bool cursor;
   final Entry entry;
   final String style;
   final double width;
@@ -213,7 +217,13 @@ class CoverCard extends StatelessWidget {
     );
     final highlight = ticked || selected;
     return Hoverable(
-      builder: (h) => GestureDetector(
+      builder: (h) => Listener(
+        onPointerDown: onMiddle == null
+            ? null
+            : (ev) {
+                if (ev.buttons & kMiddleMouseButton != 0) onMiddle!();
+              },
+        child: GestureDetector(
         onTap: onTap,
         onSecondaryTapDown: onMenu == null ? null : (d) => onMenu!(d.globalPosition),
         child: MouseRegion(
@@ -222,7 +232,8 @@ class CoverCard extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(radius + 2),
               color: highlight ? lk.tint(tk.ground, 0.17) : (h ? tk.raised : null),
-              border: Border.all(color: highlight ? lk.outline : Colors.transparent, width: 1),
+              border: Border.all(
+                  color: cursor ? lk.acc : (highlight ? lk.outline : Colors.transparent), width: cursor ? 2 : 1),
             ),
             padding: const EdgeInsets.all(1),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -250,6 +261,7 @@ class CoverCard extends StatelessWidget {
             ]),
           ),
         ),
+      ),
       ),
     );
   }
@@ -315,13 +327,13 @@ Future<void> adjustCover(BuildContext context, Title t, double radius) async {
                   style: ts(c: tk.warn, size: 12)),
           ]),
           actions: [
+            Btn.primary('Save', onTap: () => Navigator.pop(c, true)),
+            Btn('Cancel', onTap: () => Navigator.pop(c, false)),
             Btn('Reset', onTap: () => set(() {
                   x = 0;
                   y = 0;
                   zoom = 1;
                 })),
-            Btn('Cancel', onTap: () => Navigator.pop(c, false)),
-            Btn.primary('Save', onTap: () => Navigator.pop(c, true)),
           ],
         );
       },

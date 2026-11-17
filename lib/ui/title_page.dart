@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:math';
+
+import 'package:flutter/gestures.dart';
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart' hide Title;
@@ -6,6 +9,8 @@ import 'package:material_ui/material_ui.dart' hide Title;
 import '../core/db.dart';
 import '../core/jobs.dart';
 import '../core/library.dart';
+import '../core/settings.dart';
+import 'look.dart';
 import 'app.dart';
 import 'covers.dart';
 import 'library_page.dart';
@@ -36,56 +41,178 @@ class _TitlePageState extends State<TitlePage> {
     return ts_.firstWhere((t) => !t.isRead, orElse: () => ts_.first);
   }
 
+  bool selectMode = false;
+  int cursor = -1;
+  final FocusNode _keys = FocusNode(debugLabel: 'title');
+  final ScrollController _scroll = ScrollController();
+  double _rowExtent = 60;
+  int _cols = 1;
+
+  bool get gridView => Settings.I.width('title.grid', 0) > 0;
+  double get leftW => Settings.I.width('title.left', 320).clamp(240, 720);
+  double get tile => Settings.I.width('title.tile', 150).clamp(90, 360);
+
+  @override
+  void dispose() {
+    _keys.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return CallbackShortcuts(
-      bindings: {const SingleActivator(LogicalKeyboardKey.escape): widget.onBack},
-      child: Focus(
-        autofocus: true,
-        child: ListenableBuilder(
-          listenable: Library.I,
-          builder: (context, _) => Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Btn.ghost('Back', icon: Icons.arrow_back, onTap: widget.onBack),
-                const SizedBox(width: 8),
-                Expanded(child: Text(widget.entry.name, style: ts(size: 15, w: FontWeight.w700), overflow: TextOverflow.ellipsis)),
-              ]),
-              const SizedBox(height: 10),
-              Expanded(
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  SizedBox(
-                    width: 280,
-                    child: Column(children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(lk.rPanel),
-                        child: AspectRatio(aspectRatio: 1 / 1.42, child: CoverThumb(title: widget.entry.cover)),
-                      ),
-                      const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
-                        child: Btn.primary(_readLabel(), icon: Icons.menu_book, onTap: () => _read(current)),
-                      ),
-                      if (current.lastPage > 0 || current.isRead) ...[
-                        const SizedBox(height: 6),
-                        SizedBox(
-                          width: double.infinity,
-                          child: Btn('Start from the beginning', onTap: () => _read(current, page: 0)),
-                        ),
-                      ],
-                    ]),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(child: isGroup ? _groupBody() : _singleBody(current)),
-                ]),
-              ),
+    return Focus(
+      focusNode: _keys,
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: ListenableBuilder(
+        listenable: Listenable.merge([Library.I, Settings.I]),
+        builder: (context, _) => Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Btn.ghost('Back', icon: Icons.arrow_back, onTap: widget.onBack),
+              const SizedBox(width: 8),
+              Expanded(child: Text(widget.entry.name, style: ts(size: 15, w: FontWeight.w700), overflow: TextOverflow.ellipsis)),
             ]),
-          ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SizedBox(width: leftW, child: _left()),
+                DragHandle(
+                  width: 14,
+                  onDrag: (dx) => Settings.I.setWidth('title.left', (leftW + dx).clamp(240, 720)),
+                  onEnd: Settings.I.save,
+                ),
+                Expanded(child: isGroup ? _groupBody() : SingleChildScrollView(child: _history(current))),
+              ]),
+            ),
+          ]),
         ),
       ),
     );
   }
+
+  /// Cover, read buttons, and all the details, in one scrolling column.
+  Widget _left() {
+    final cover = isGroup ? widget.entry.cover : current;
+    return ListView(children: [
+      Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 300),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(lk.rPanel),
+            child: AspectRatio(aspectRatio: 1 / 1.42, child: CoverThumb(title: cover)),
+          ),
+        ),
+      ),
+      const SizedBox(height: 10),
+      Btn.primary(_readLabel(), icon: Icons.menu_book, onTap: () => _read(current)),
+      if (current.lastPage > 0 || current.isRead) ...[
+        const SizedBox(height: 6),
+        Btn('Start from the beginning', onTap: () => _read(current, page: 0)),
+      ],
+      const SizedBox(height: 10),
+      if (isGroup) ...[_groupSummary(), const SizedBox(height: 10)],
+      _details(current),
+    ]);
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent e) {
+    if (e is! KeyDownEvent || typingInField) return KeyEventResult.ignored;
+    final k = e.logicalKey;
+    if (k == LogicalKeyboardKey.escape) {
+      if (ticked.isNotEmpty || selectMode) {
+        setState(() {
+          ticked.clear();
+          selectMode = false;
+        });
+      } else {
+        widget.onBack();
+      }
+      return KeyEventResult.handled;
+    }
+    if (!isGroup) {
+      if (k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter) {
+        _read(current);
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    final list = chapters;
+    final across = gridView ? _cols : 1;
+    int? move;
+    if (k == LogicalKeyboardKey.arrowDown) move = across;
+    if (k == LogicalKeyboardKey.arrowUp) move = -across;
+    if (gridView && k == LogicalKeyboardKey.arrowRight) move = 1;
+    if (gridView && k == LogicalKeyboardKey.arrowLeft) move = -1;
+    if (k == LogicalKeyboardKey.pageDown) move = across * 6;
+    if (k == LogicalKeyboardKey.pageUp) move = -across * 6;
+    if (k == LogicalKeyboardKey.home) move = -list.length;
+    if (k == LogicalKeyboardKey.end) move = list.length;
+    if (move != null) {
+      final i = cursor < 0 ? 0 : (cursor + move).clamp(0, list.length - 1);
+      setState(() => cursor = i);
+      _reveal(i);
+      return KeyEventResult.handled;
+    }
+    if ((k == LogicalKeyboardKey.enter || k == LogicalKeyboardKey.numpadEnter) && cursor >= 0) {
+      _read(list[cursor]);
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.space && cursor >= 0) {
+      if (selectMode) {
+        final t = list[cursor];
+        setState(() => ticked.contains(t.id) ? ticked.remove(t.id) : ticked.add(t.id));
+      } else {
+        setState(() => current = list[cursor]);
+      }
+      return KeyEventResult.handled;
+    }
+    if (k == LogicalKeyboardKey.keyA && HardwareKeyboard.instance.isControlPressed) {
+      setState(() => ticked.addAll(list.map((t) => t.id)));
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _reveal(int i) {
+    if (!_scroll.hasClients) return;
+    final row = i ~/ max(1, gridView ? _cols : 1);
+    final top = row * _rowExtent, bottom = top + _rowExtent;
+    final pos = _scroll.position;
+    if (top < pos.pixels) {
+      _scroll.jumpTo(top.clamp(0, pos.maxScrollExtent));
+    } else if (bottom > pos.pixels + pos.viewportDimension) {
+      _scroll.jumpTo((bottom - pos.viewportDimension).clamp(0, pos.maxScrollExtent));
+    }
+  }
+
+  /// Click: open. Ctrl+click ticks one, Shift+click ticks a range, and in
+  /// select mode a click ticks.
+  void _tapChapter(Title t, int i) {
+    _keys.requestFocus();
+    final list = chapters;
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    final ctrl = HardwareKeyboard.instance.isControlPressed;
+    if (shift && lastTick != null) {
+      final a = min(lastTick!, i), b = max(lastTick!, i);
+      setState(() => ticked.addAll(list.sublist(a, b + 1).map((x) => x.id)));
+    } else if (ctrl || selectMode) {
+      setState(() => ticked.contains(t.id) ? ticked.remove(t.id) : ticked.add(t.id));
+    } else {
+      setState(() => cursor = i);
+      _read(t);
+    }
+    lastTick = i;
+    if (shift || ctrl || selectMode) setState(() => cursor = i);
+  }
+
+  /// Middle click: show this chapter's details on the left.
+  void _showChapter(Title t, int i) => setState(() {
+        cursor = i;
+        current = t;
+      });
 
   String _readLabel() {
     final t = current;
@@ -102,14 +229,6 @@ class _TitlePageState extends State<TitlePage> {
     openReader(context, t, context_: queue, startPage: page);
   }
 
-  Widget _singleBody(Title t) {
-    return ListView(children: [
-      _details(t),
-      const SizedBox(height: 16),
-      _history(t),
-    ]);
-  }
-
   Widget _details(Title t) {
     final tags = Library.I.tagsOf(t).map((id) => Library.I.tagById(t.section, id)).whereType<Tag>().toList();
     Widget row(String k, String? v, {bool mono = false, VoidCallback? onTap}) => v == null || v.isEmpty
@@ -117,7 +236,7 @@ class _TitlePageState extends State<TitlePage> {
         : Padding(
             padding: const EdgeInsets.symmetric(vertical: 2),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              SizedBox(width: 120, child: Text(k, style: ts(c: tk.faint))),
+              SizedBox(width: 104, child: Text(k, style: ts(c: tk.faint))),
               Expanded(
                 child: GestureDetector(
                   onTap: onTap,
@@ -135,19 +254,16 @@ class _TitlePageState extends State<TitlePage> {
         Text(t.displayTitle, style: ts(size: 15, w: FontWeight.w700)),
         if (t.altTitle != null) Text(t.altTitle!, style: ts(c: tk.sec)),
         const SizedBox(height: 10),
-        Row(children: [
-          Stars(value: t.rating, size: 22, onChanged: (v) => Library.I.setRating(t, v)),
-          const SizedBox(width: 12),
+        Stars(value: t.rating, size: 22, onChanged: (v) => Library.I.setRating(t, v)),
+        const SizedBox(height: 8),
+        Wrap(spacing: 6, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
           IconBtn(t.favourite ? Icons.favorite : Icons.favorite_border,
               tooltip: t.favourite ? 'Favourite' : 'Not a favourite',
               color: t.favourite ? const Color(0xFFFF6FB1) : null,
               onTap: () => Library.I.toggleFavourite([t])),
-          const SizedBox(width: 8),
           TagMenu(section: t.section, titles: [t]),
-          const SizedBox(width: 8),
           Btn(t.isRead ? 'Mark unread' : 'Mark read', dense: true, icon: t.isRead ? Icons.remove_done : Icons.done_all,
               onTap: () => Library.I.markRead([t], !t.isRead)),
-          const SizedBox(width: 8),
           Btn('Edit details', dense: true, icon: Icons.edit_outlined, onTap: () => _edit(t)),
         ]),
         if (tags.isNotEmpty) ...[
@@ -178,7 +294,7 @@ class _TitlePageState extends State<TitlePage> {
         row('Progress', t.pages > 0 ? 'Page ${t.lastPage + 1} of ${t.pages}' : null),
         row('File', t.path, mono: true),
         const SizedBox(height: 8),
-        Row(children: [
+        Wrap(children: [
           Btn.ghost('Show in folder', icon: Icons.folder_open_outlined, onTap: () {
             if (Platform.isWindows) Process.run('explorer.exe', ['/select,', t.path]);
           }),
@@ -186,14 +302,7 @@ class _TitlePageState extends State<TitlePage> {
             Clipboard.setData(ClipboardData(text: t.path));
             toast('Path copied');
           }),
-          Btn.ghost('Choose cover page', icon: Icons.image_outlined, onTap: () async {
-            final v = await ask(context, 'Cover page', body: 'Which page should be the cover? (1 to ${t.pages})',
-                initial: '${t.coverPage + 1}', confirmLabel: 'Use this page');
-            final n = int.tryParse(v ?? '');
-            if (n == null) return;
-            t.coverPage = (n - 1).clamp(0, t.pages > 0 ? t.pages - 1 : 0);
-            Library.I.saveEdits(t);
-          }),
+          Btn.ghost('Choose cover page', icon: Icons.image_outlined, onTap: () => chooseCoverPage(context, t)),
         ]),
       ]),
     );
@@ -222,14 +331,6 @@ class _TitlePageState extends State<TitlePage> {
               style: ts(c: tk.faint, size: 12)),
         ]),
         actions: [
-          Btn('Undo my edits', onTap: () {
-            t.userTitle = null;
-            t.userArtist = null;
-            t.userSeries = null;
-            t.userChapter = null;
-            Navigator.pop(c, true);
-          }),
-          Btn('Cancel', onTap: () => Navigator.pop(c, false)),
           Btn.primary('Save details', onTap: () {
             String? v(TextEditingController x, String? orig) => x.text.trim().isEmpty || x.text.trim() == orig ? null : x.text.trim();
             t.userTitle = v(title, t.title);
@@ -238,6 +339,14 @@ class _TitlePageState extends State<TitlePage> {
             final ch = double.tryParse(chapter.text.trim());
             t.userChapter = ch == t.chapter ? null : ch;
             t.needsCheck = false;
+            Navigator.pop(c, true);
+          }),
+          Btn('Cancel', onTap: () => Navigator.pop(c, false)),
+          Btn('Undo my edits', onTap: () {
+            t.userTitle = null;
+            t.userArtist = null;
+            t.userSeries = null;
+            t.userChapter = null;
             Navigator.pop(c, true);
           }),
         ],
@@ -278,33 +387,75 @@ class _TitlePageState extends State<TitlePage> {
     );
   }
 
+  Widget _groupSummary() {
+    final list = chapters;
+    final reads = list.where((t) => t.isRead).length;
+    final first = list.first;
+    return PanelBox(
+      padding: const EdgeInsets.all(14),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(widget.entry.name, style: ts(size: 15, w: FontWeight.w700)),
+        const SizedBox(height: 4),
+        Text(
+            '${first.displayArtist != null ? '${first.displayArtist} · ' : ''}${list.length} ${widget.entry is FolderEntry ? 'files' : 'chapters'} · $reads read · '
+            '${humanSize(list.fold<int>(0, (a, t) => a + t.size))}',
+            style: ts(c: tk.sec)),
+        const SizedBox(height: 8),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          Btn('Favourite all', dense: true, icon: Icons.favorite_border, onTap: () => Library.I.toggleFavourite(list)),
+          TagMenu(section: first.section, titles: list),
+          if (first.displayArtist != null)
+            Btn.ghost('More by ${first.displayArtist}', dense: true, onTap: () => widget.onOpenArtist(first.displayArtist!)),
+        ]),
+      ]),
+    );
+  }
+
+  static const _chCols = ColumnSet('chapters', [
+    Col('no', '#', 70),
+    Col('title', 'Title', 380, min: 120),
+    Col('pages', 'Pages', 64, right: true),
+    Col('rating', 'Rating', 90),
+    Col('last', 'Last read', 110),
+    Col('progress', 'Progress', 90),
+    Col('read', 'Read', 44),
+  ]);
+
   Widget _groupBody() {
     final list = chapters;
     final tickedTitles = list.where((t) => ticked.contains(t.id)).toList();
-    final reads = list.where((t) => t.isRead).length;
-    final first = list.first;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      PanelBox(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(widget.entry.name, style: ts(size: 15, w: FontWeight.w700)),
-          const SizedBox(height: 4),
-          Text(
-              '${first.displayArtist != null ? '${first.displayArtist} · ' : ''}${list.length} ${widget.entry is FolderEntry ? 'files' : 'chapters'} · $reads read · '
-              '${humanSize(list.fold<int>(0, (a, t) => a + t.size))}',
-              style: ts(c: tk.sec)),
-          const SizedBox(height: 8),
-          Row(children: [
-            Btn('Favourite all', dense: true, icon: Icons.favorite_border, onTap: () => Library.I.toggleFavourite(list)),
-            const SizedBox(width: 6),
-            TagMenu(section: first.section, titles: list),
-            if (first.displayArtist != null) ...[
-              const SizedBox(width: 6),
-              Btn.ghost('More by ${first.displayArtist}', dense: true, onTap: () => widget.onOpenArtist(first.displayArtist!)),
-            ],
-          ]),
-        ]),
-      ),
+      Row(children: [
+        Seg<bool>(
+          value: gridView,
+          items: const [(false, 'List'), (true, 'Grid')],
+          onChanged: (v) {
+            Settings.I.setWidth('title.grid', v ? 1 : 0);
+            Settings.I.save();
+          },
+        ),
+        const SizedBox(width: 8),
+        Btn(selectMode ? 'Done selecting' : 'Select',
+            icon: selectMode ? Icons.check_box_outlined : Icons.check_box_outline_blank,
+            dense: true,
+            tooltip: 'Tick chapters. Ctrl+click ticks one, Shift+click ticks a range.',
+            onTap: () => setState(() {
+                  selectMode = !selectMode;
+                  if (!selectMode) ticked.clear();
+                })),
+        const Spacer(),
+        Text('Size', style: ts(c: tk.faint)),
+        SizedBox(
+          width: 140,
+          child: Slider(
+            value: tile,
+            min: 90,
+            max: 360,
+            onChanged: (v) => Settings.I.setWidth('title.tile', v),
+            onChangeEnd: (_) => Settings.I.save(),
+          ),
+        ),
+      ]),
       const SizedBox(height: 8),
       if (tickedTitles.isNotEmpty)
         Container(
@@ -327,76 +478,145 @@ class _TitlePageState extends State<TitlePage> {
             Btn.ghost('Clear ticks', dense: true, onTap: () => setState(ticked.clear)),
           ]),
         ),
-      Expanded(
-        child: Container(
-          decoration: BoxDecoration(color: tk.field, borderRadius: BorderRadius.circular(lk.rPanel), border: Border.all(color: tk.line)),
-          child: ListView.builder(
-            itemCount: list.length,
-            itemBuilder: (_, i) {
-              final t = list[i];
-              final isTicked = ticked.contains(t.id);
-              return Hoverable(
-                builder: (h) => GestureDetector(
-                  onTap: () {
-                    if (HardwareKeyboard.instance.isShiftPressed && lastTick != null) {
-                      final a = lastTick! < i ? lastTick! : i, b = lastTick! < i ? i : lastTick!;
-                      setState(() => ticked.addAll(list.sublist(a, b + 1).map((x) => x.id)));
-                    } else if (HardwareKeyboard.instance.isControlPressed) {
-                      setState(() => isTicked ? ticked.remove(t.id) : ticked.add(t.id));
-                    } else if (current.id == t.id) {
-                      _read(t); // clicking the selected chapter again opens it
-                    } else {
-                      setState(() => current = t);
-                    }
-                    lastTick = i;
-                  },
-                  onSecondaryTapDown: (d) => _menu(t, d.globalPosition),
-                  child: Container(
-                    height: lk.hRow + 20,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: isTicked ? lk.tint(tk.field, 0.17) : (t.id == current.id ? lk.tint(tk.field, 0.09) : (h ? tk.raised : null)),
-                      border: t.id == current.id ? Border.all(color: lk.outline, width: 1) : null,
-                    ),
-                    child: Row(children: [
-                      Checkbox(value: isTicked, onChanged: (_) => setState(() {
-                            isTicked ? ticked.remove(t.id) : ticked.add(t.id);
-                            lastTick = i;
-                          })),
-                      SizedBox(
-                          width: 70,
-                          child: Text(
-                              t.displayChapter != null ? 'Ch. ${_num(t.displayChapter!)}' : (t.orderPrefix != null ? '#${t.orderPrefix}' : '${i + 1}'),
-                              style: ts(c: tk.sec, tab: true))),
-                      Expanded(
-                        child: Text(t.displayTitle,
-                            style: ts(c: t.isRead ? tk.faint : tk.text, w: t.inProgress ? FontWeight.w600 : null),
-                            overflow: TextOverflow.ellipsis),
+      Expanded(child: gridView ? _chapterGrid() : _chapterList()),
+    ]);
+  }
+
+  String _chLabel(Title t, int i) =>
+      t.displayChapter != null ? 'Ch. ${_num(t.displayChapter!)}' : (t.orderPrefix != null ? '#${t.orderPrefix}' : '${i + 1}');
+
+  Widget _chapterGrid() {
+    final list = chapters;
+    return LayoutBuilder(builder: (context, c) {
+      const gap = 10.0;
+      final cols = max(1, ((c.maxWidth + gap) / (tile + gap)).ceil());
+      final cw = (c.maxWidth - gap * (cols - 1)) / cols;
+      final extent = (cw - 2) * 1.42 + 2 + CoverCard.textHeight(cw);
+      _cols = cols;
+      _rowExtent = extent + gap;
+      return GridView.builder(
+        controller: _scroll,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cols, mainAxisSpacing: gap, crossAxisSpacing: gap, mainAxisExtent: extent),
+        itemCount: list.length,
+        itemBuilder: (_, i) {
+          final t = list[i];
+          return CoverCard(
+            entry: TitleEntry(t),
+            style: 'comfortable',
+            width: cw,
+            radius: Look.I.coverRadius,
+            fill: Settings.I.of(t.section).coverFill,
+            selected: current.id == t.id,
+            cursor: cursor == i,
+            ticked: ticked.contains(t.id),
+            anyTicked: selectMode,
+            onTap: () => _tapChapter(t, i),
+            onMiddle: () => _showChapter(t, i),
+            onMenu: (pos) => _menu(t, pos),
+            onTick: () => setState(() {
+              ticked.contains(t.id) ? ticked.remove(t.id) : ticked.add(t.id);
+              lastTick = i;
+            }),
+          );
+        },
+      );
+    });
+  }
+
+  Widget _chapterList() {
+    final list = chapters;
+    final thumb = (tile / 4).clamp(24.0, 90.0);
+    final extent = max(lk.hRow + 8, thumb * 1.42 + 8);
+    final lead = (selectMode ? 30.0 : 0) + thumb + 10;
+    _rowExtent = extent;
+    _cols = 1;
+    return Container(
+      decoration: BoxDecoration(color: tk.field, borderRadius: BorderRadius.circular(lk.rPanel), border: Border.all(color: tk.line)),
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: lead + 16 + _chCols.cols.fold<double>(0, (a, c) => a + _chCols.w(c)),
+          child: Column(children: [
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: _chCols.header(leading: lead)),
+            Expanded(
+              child: ListView.builder(
+                controller: _scroll,
+                itemCount: list.length,
+                itemExtent: extent,
+                itemBuilder: (_, i) {
+                  final t = list[i];
+                  final isTicked = ticked.contains(t.id);
+                  return Hoverable(
+                    builder: (h) => Listener(
+                      onPointerDown: (ev) {
+                        if (ev.buttons & kMiddleMouseButton != 0) _showChapter(t, i);
+                      },
+                      child: GestureDetector(
+                        onTap: () => _tapChapter(t, i),
+                        onSecondaryTapDown: (d) => _menu(t, d.globalPosition),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: rowColor(i, hover: h, selected: isTicked || t.id == current.id, cursor: cursor == i),
+                              border: cursor == i ? Border(left: BorderSide(color: lk.acc, width: 3)) : null,
+                            ),
+                            child: Row(children: [
+                              if (selectMode)
+                                SizedBox(
+                                  width: 30,
+                                  child: Checkbox(
+                                      value: isTicked,
+                                      onChanged: (_) => setState(() {
+                                            isTicked ? ticked.remove(t.id) : ticked.add(t.id);
+                                            lastTick = i;
+                                          })),
+                                ),
+                              SizedBox(
+                                width: thumb + 10,
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(3),
+                                    child: SizedBox(width: thumb, height: thumb * 1.42, child: CoverThumb(title: t)),
+                                  ),
+                                ),
+                              ),
+                              _chCols.row([
+                                Text(_chLabel(t, i), style: ts(c: tk.sec, tab: true)),
+                                Row(children: [
+                                  Flexible(
+                                    child: Text(t.displayTitle,
+                                        style: ts(c: t.isRead ? tk.faint : tk.text, w: t.inProgress ? FontWeight.w600 : null),
+                                        overflow: TextOverflow.ellipsis),
+                                  ),
+                                  if (t.favourite)
+                                    const Padding(
+                                        padding: EdgeInsets.only(left: 6),
+                                        child: Icon(Icons.favorite, size: 13, color: Color(0xFFFF6FB1))),
+                                ]),
+                                Text('${t.pages}', style: ts(c: tk.sec, tab: true)),
+                                t.rating > 0 ? Stars(value: t.rating, size: 12) : const SizedBox(),
+                                Text(t.lastReadAt > 0 ? dateText(t.lastReadAt) : '', style: ts(c: tk.sec, tab: true)),
+                                Progress(value: t.progress, height: 4),
+                                t.isRead ? Icon(Icons.check, size: 15, color: tk.ok) : const SizedBox(),
+                              ]),
+                            ]),
+                          ),
+                        ),
                       ),
-                      if (t.favourite) const Icon(Icons.favorite, size: 13, color: Color(0xFFFF6FB1)),
-                      if (t.rating > 0) Padding(padding: const EdgeInsets.only(left: 8), child: Stars(value: t.rating, size: 12)),
-                      SizedBox(width: 70, child: Text('${t.pages} p', textAlign: TextAlign.right, style: ts(c: tk.faint, tab: true))),
-                      const SizedBox(width: 10),
-                      SizedBox(width: 80, child: Progress(value: t.progress, height: 4)),
-                      const SizedBox(width: 6),
-                      SizedBox(
-                          width: 20,
-                          child: t.isRead ? Icon(Icons.check, size: 15, color: tk.ok) : const SizedBox()),
-                      IconBtn(Icons.more_horiz, tooltip: 'More', onTap: () {
-                        final box = context.findRenderObject() as RenderBox?;
-                        _menu(t, box == null ? Offset.zero : box.localToGlobal(Offset(box.size.width - 40, 120.0 + i * (lk.hRow + 20))));
-                      }),
-                    ]),
-                  ),
-                ),
-              );
-            },
-          ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ]),
         ),
       ),
-      const SizedBox(height: 8),
-      SizedBox(height: 190, child: SingleChildScrollView(child: _details(current))),
-    ]);
+    );
   }
 
   void _menu(Title t, Offset at) async {

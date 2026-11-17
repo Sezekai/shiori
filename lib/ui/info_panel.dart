@@ -7,6 +7,7 @@ import '../core/library.dart';
 import '../core/settings.dart';
 import 'covers.dart';
 import 'library_page.dart';
+import 'look.dart';
 import 'widgets.dart';
 
 /// The details bar on the right of the library. "Expand" opens the full page.
@@ -15,15 +16,20 @@ class InfoPanel extends StatelessWidget {
     super.key,
     required this.entry,
     required this.onClose,
-    required this.onExpand,
     required this.onRead,
-    required this.onOpenArtist,
+    this.onExpand,
+    this.onOpenArtist,
+    this.width = 340,
+    this.onResize,
   });
   final Entry entry;
   final VoidCallback onClose;
-  final VoidCallback onExpand;
+  final VoidCallback? onExpand;
   final void Function(Title t, int? page) onRead;
-  final ValueChanged<String> onOpenArtist;
+  final ValueChanged<String>? onOpenArtist;
+  final double width;
+  /// Dragging the left edge; null = fixed width.
+  final ValueChanged<double>? onResize;
 
   static Title continueTitle(List<Title> ts_) {
     final inProg = ts_.where((t) => t.inProgress).toList()..sort((a, b) => b.lastReadAt.compareTo(a.lastReadAt));
@@ -40,7 +46,6 @@ class InfoPanel extends StatelessWidget {
     final t = group ? continueTitle(e.titles) : e.cover;
     final cover = e.cover;
     final tags = Library.I.tagsOf(t).map((id) => Library.I.tagById(t.section, id)).whereType<Tag>().toList();
-    final ss = Settings.I.of(t.section);
     final readLabel = t.inProgress
         ? 'Continue${group && t.displayChapter != null ? ' ch. ${num(t.displayChapter!)}' : ''} · p${t.lastPage + 1}/${t.pages}'
         : (t.isRead && !group ? 'Read again' : 'Read${group && t.displayChapter != null ? ' ch. ${num(t.displayChapter!)}' : ''}');
@@ -64,9 +69,11 @@ class InfoPanel extends StatelessWidget {
           );
 
     return Container(
-      width: 340,
+      width: width,
       decoration: BoxDecoration(color: tk.panel, border: Border(left: BorderSide(color: tk.line))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      child: Row(children: [
+        if (onResize != null) DragHandle(onDrag: (dx) => onResize!(-dx), onEnd: Settings.I.save, line: false),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Container(
           height: 40,
           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -74,7 +81,7 @@ class InfoPanel extends StatelessWidget {
           child: Row(children: [
             Text('Details', style: ts(w: FontWeight.w600)),
             const Spacer(),
-            IconBtn(Icons.open_in_full, tooltip: 'Open the full page', onTap: onExpand),
+            if (onExpand != null) IconBtn(Icons.open_in_full, tooltip: 'Open the full page', onTap: onExpand),
             IconBtn(Icons.close, tooltip: 'Close (mouse back)', onTap: onClose),
           ]),
         ),
@@ -86,7 +93,7 @@ class InfoPanel extends StatelessWidget {
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(ss.coverRadius),
+                    borderRadius: BorderRadius.circular(Look.I.coverRadius),
                     child: SizedBox(width: 200, height: 284, child: CoverThumb(title: cover)),
                   ),
                 ),
@@ -97,7 +104,7 @@ class InfoPanel extends StatelessWidget {
             if (!group && t.altTitle != null) Text(t.altTitle!, style: ts(c: tk.sec, size: 12)),
             if (t.displayArtist != null)
               GestureDetector(
-                onTap: () => onOpenArtist(t.displayArtist!),
+                onTap: onOpenArtist == null ? null : () => onOpenArtist!(t.displayArtist!),
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
                   child: Text(t.displayArtist!, style: ts(c: lk.acc)),
@@ -148,6 +155,7 @@ class InfoPanel extends StatelessWidget {
             ],
           ]),
         ),
+      ])),
       ]),
     );
   }

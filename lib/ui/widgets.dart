@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'look.dart';
+import '../core/settings.dart';
 
 Tokens get tk => Look.I.t;
 Look get lk => Look.I;
@@ -486,10 +487,9 @@ Future<bool> confirm(BuildContext context, String title, String body,
       title: title,
       body: Text(body, style: ts(c: tk.sec)),
       actions: [
-        Btn('Cancel', onTap: () => Navigator.pop(c, false)),
         Btn(confirmLabel, kind: danger ? BtnKind.danger : BtnKind.primary, onTap: () => Navigator.pop(c, true)),
+        Btn('Cancel', onTap: () => Navigator.pop(c, false)),
       ],
-      onEnter: () => Navigator.pop(c, true),
     ),
   );
   return r ?? false;
@@ -502,51 +502,95 @@ Future<String?> ask(BuildContext context, String title, {String? body, String in
     barrierColor: Colors.black54,
     builder: (c) => AppDialog(
       title: title,
+      focusActions: false,
       body: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (body != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(body, style: ts(c: tk.sec))),
         Field(controller: ctl, autofocus: true, onSubmitted: (v) => Navigator.pop(c, v.trim())),
       ]),
       actions: [
-        Btn('Cancel', onTap: () => Navigator.pop(c)),
         Btn.primary(confirmLabel, onTap: () => Navigator.pop(c, ctl.text.trim())),
+        Btn('Cancel', onTap: () => Navigator.pop(c)),
       ],
     ),
   );
 }
 
-class AppDialog extends StatelessWidget {
-  const AppDialog({super.key, required this.title, required this.body, required this.actions, this.width = 440, this.onEnter});
+/// Every dialog: the first button starts selected, ← → (and Tab) move
+/// between buttons, Enter or Space presses the selected one, Esc closes.
+class AppDialog extends StatefulWidget {
+  const AppDialog({super.key, required this.title, required this.body, required this.actions, this.width = 440,
+      this.focusActions = true});
   final String title;
   final Widget body;
   final List<Widget> actions;
   final double width;
-  final VoidCallback? onEnter;
+  /// False when a text box should have the keyboard instead.
+  final bool focusActions;
+  @override
+  State<AppDialog> createState() => _AppDialogState();
+}
+
+class _AppDialogState extends State<AppDialog> {
+  final FocusScopeNode _buttons = FocusScopeNode(debugLabel: 'dialog buttons');
+  late final FocusHighlightStrategy _was = FocusManager.instance.highlightStrategy;
+
+  @override
+  void initState() {
+    super.initState();
+    // Show which button is selected even if the dialog was opened with the mouse.
+    FocusManager.instance.highlightStrategy = FocusHighlightStrategy.alwaysTraditional;
+    if (widget.focusActions) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _buttons.requestFocus();
+        _buttons.nextFocus();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    FocusManager.instance.highlightStrategy = _was;
+    _buttons.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return CallbackShortcuts(
-      bindings: {
-        if (onEnter != null) const SingleActivator(LogicalKeyboardKey.enter): onEnter!,
-      },
-      child: Focus(
-        autofocus: true,
-        child: Dialog(
-          backgroundColor: tk.panel,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(lk.rPanel), side: BorderSide(color: tk.line2)),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: width),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(title, style: ts(size: lk.fontSize + 2, w: FontWeight.w700)),
-                const SizedBox(height: 10),
-                Flexible(child: body),
-                const SizedBox(height: 16),
-                Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                  for (final a in actions) Padding(padding: const EdgeInsets.only(left: 8), child: a),
-                ]),
-              ]),
+    return Dialog(
+      backgroundColor: tk.panel,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(lk.rPanel), side: BorderSide(color: tk.line2)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: widget.width),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(widget.title, style: ts(size: lk.fontSize + 2, w: FontWeight.w700)),
+            const SizedBox(height: 10),
+            Flexible(child: widget.body),
+            const SizedBox(height: 16),
+            Shortcuts(
+              shortcuts: const {
+                SingleActivator(LogicalKeyboardKey.arrowLeft): PreviousFocusIntent(),
+                SingleActivator(LogicalKeyboardKey.arrowRight): NextFocusIntent(),
+                SingleActivator(LogicalKeyboardKey.arrowUp): PreviousFocusIntent(),
+                SingleActivator(LogicalKeyboardKey.arrowDown): NextFocusIntent(),
+              },
+              child: FocusScope(
+                node: _buttons,
+                child: FocusTraversalGroup(
+                  policy: OrderedTraversalPolicy(),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    for (var i = 0; i < widget.actions.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: FocusTraversalOrder(order: NumericFocusOrder(i.toDouble()), child: widget.actions[i]),
+                      ),
+                  ]),
+                ),
+              ),
             ),
-          ),
+          ]),
         ),
       ),
     );
@@ -669,4 +713,137 @@ String dateText(int epochSec) {
 String timeText(int epochSec) {
   final d = DateTime.fromMillisecondsSinceEpoch(epochSec * 1000);
   return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+}
+
+
+/// Draws everything inside at [scale]: text, icons and spacing grow together.
+class UiScale extends StatelessWidget {
+  const UiScale({super.key, required this.scale, required this.child});
+  final double scale;
+  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    if ((scale - 1).abs() < 0.001) return child;
+    return LayoutBuilder(builder: (context, c) {
+      final w = c.maxWidth / scale, h = c.maxHeight / scale;
+      final mq = MediaQuery.of(context);
+      return ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.topLeft,
+          minWidth: w,
+          maxWidth: w,
+          minHeight: h,
+          maxHeight: h,
+          child: Transform.scale(
+            scale: scale,
+            alignment: Alignment.topLeft,
+            child: MediaQuery(data: mq.copyWith(size: Size(w, h)), child: SizedBox(width: w, height: h, child: child)),
+          ),
+        ),
+      );
+    });
+  }
+}
+
+/// A thin handle to drag a panel or column wider or narrower.
+class DragHandle extends StatelessWidget {
+  const DragHandle({super.key, required this.onDrag, this.onEnd, this.width = 6, this.line = true});
+  final ValueChanged<double> onDrag;
+  final VoidCallback? onEnd;
+  final double width;
+  final bool line;
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+        cursor: SystemMouseCursors.resizeColumn,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragUpdate: (d) => onDrag(d.delta.dx),
+          onHorizontalDragEnd: (_) => onEnd?.call(),
+          child: SizedBox(
+            width: width,
+            child: line ? Center(child: Container(width: 1, color: tk.line)) : null,
+          ),
+        ),
+      );
+}
+
+/// One column of a list view.
+class Col {
+  const Col(this.key, this.label, this.width, {this.min = 40, this.sort, this.right = false});
+  final String key;
+  final String label;
+  final double width;
+  final double min;
+  final String? sort; // sort key, when clicking the header sorts
+  final bool right;
+}
+
+/// Columns whose widths can be dragged and are remembered (Settings.widths).
+/// Columns keep their widths when the window is wide, so a row's details
+/// stay close together instead of spreading across the screen.
+class ColumnSet {
+  const ColumnSet(this.table, this.cols);
+  final String table;
+  final List<Col> cols;
+
+  double w(Col c) => Settings.I.width('$table.${c.key}', c.width).clamp(c.min, 2400);
+
+  Widget header({String? sort, bool desc = false, ValueChanged<String>? onSort, double leading = 0}) {
+    return ListenableBuilder(
+      listenable: Settings.I,
+      builder: (_, _) => Container(
+        height: 30,
+        decoration: BoxDecoration(color: tk.panel, border: Border(bottom: BorderSide(color: tk.line))),
+        child: Row(children: [
+          SizedBox(width: leading),
+          for (final c in cols) ...[
+            SizedBox(
+              width: w(c) - 6,
+              child: GestureDetector(
+                onTap: c.sort == null || onSort == null ? null : () => onSort(c.sort!),
+                child: MouseRegion(
+                  cursor: c.sort == null ? SystemMouseCursors.basic : SystemMouseCursors.click,
+                  child: Padding(
+                    padding: EdgeInsets.only(right: c.right ? 4 : 0),
+                    child: Row(mainAxisAlignment: c.right ? MainAxisAlignment.end : MainAxisAlignment.start, children: [
+                    Flexible(
+                        child: Text(c.label,
+                            style: ts(size: 12, w: FontWeight.w600, c: tk.sec), overflow: TextOverflow.ellipsis)),
+                    if (c.sort != null && c.sort == sort)
+                      Icon(desc ? Icons.arrow_drop_down : Icons.arrow_drop_up, size: 16, color: lk.acc),
+                  ]),
+                  ),
+                ),
+              ),
+            ),
+            DragHandle(
+              onDrag: (dx) => Settings.I.setWidth('$table.${c.key}', (w(c) + dx).clamp(c.min, 2400)),
+              onEnd: Settings.I.save,
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  /// Cells in the same widths as the header. Pass one widget per column.
+  Widget row(List<Widget> cells, {double leading = 0}) => Row(children: [
+        SizedBox(width: leading),
+        for (var i = 0; i < cols.length; i++)
+          SizedBox(
+            width: w(cols[i]),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: Align(alignment: cols[i].right ? Alignment.centerRight : Alignment.centerLeft, child: cells[i]),
+            ),
+          ),
+      ]);
+}
+
+/// Row background: every other row a shade lighter, plus hover and selection.
+Color? rowColor(int i, {bool hover = false, bool selected = false, bool cursor = false}) {
+  if (selected) return lk.tint(tk.field, 0.17);
+  if (cursor) return lk.tint(tk.field, 0.1);
+  if (hover) return tk.raised;
+  return i.isOdd ? Color.lerp(tk.field, tk.raised, 0.45) : null;
 }

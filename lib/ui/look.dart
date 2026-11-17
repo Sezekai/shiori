@@ -188,6 +188,9 @@ class Look extends ChangeNotifier {
   Color? outlineColour;
   double outlineWidth = 2;
   Color? highlightColour;
+  double uiScale = 1; // the main window, dialogs and menus
+  double readerScale = 1; // the reader's controls
+  double coverRadius = 6; // rounded corners on covers
   String? activeTheme;
   List<Map<String, dynamic>> saved = [];
 
@@ -231,6 +234,8 @@ class Look extends ChangeNotifier {
         'buttons': {'style': buttons},
         'outline': {'colour': outlineColour == null ? '' : colorHex(outlineColour!), 'width': outlineWidth},
         'highlight': {'colour': highlightColour == null ? '' : colorHex(highlightColour!)},
+        'scale': {'main': uiScale, 'reader': readerScale},
+        'covers': {'radius': coverRadius},
       };
 
   /// Reads a theme file. Missing or invalid values fall back to the default.
@@ -276,6 +281,10 @@ class Look extends ChangeNotifier {
     final oc = o?['colour'];
     outlineColour = oc is String && oc.isNotEmpty ? hexColor(oc) : null;
     outlineWidth = ((o?['width'] as num?)?.toDouble() ?? 2).clamp(1, 4);
+    final sc = m['scale'] as Map?;
+    uiScale = ((sc?['main'] as num?)?.toDouble() ?? 1).clamp(0.8, 1.6);
+    readerScale = ((sc?['reader'] as num?)?.toDouble() ?? 1).clamp(0.8, 2.0);
+    coverRadius = (((m['covers'] as Map?)?['radius'] as num?)?.toDouble() ?? 6).clamp(0, 24);
     final h = (m['highlight'] as Map?)?['colour'];
     highlightColour = h is String && h.isNotEmpty ? hexColor(h) : null;
   }

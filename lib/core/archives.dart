@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import 'parse.dart';
+import 'zip.dart';
 
 const imageExts = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif', '.jxl', '.jp2'};
 
@@ -60,7 +61,7 @@ String detectKind(RandomAccessFile f) {
   return 'zip';
 }
 
-FileInfo inspectFile(String path, String? sevenZip) {
+Future<FileInfo> inspectFile(String path, String? sevenZip) async {
   final file = File(path);
   try {
     final st = file.statSync();
@@ -75,12 +76,21 @@ FileInfo inspectFile(String path, String? sevenZip) {
     }
     var pages = 0;
     if (kind == 'zip') {
-      final input = InputFileStream(path);
       try {
-        final arc = ZipDecoder().decodeStream(input);
-        pages = arc.files.where((f) => f.isFile && isPageName(f.name)).length;
-      } finally {
-        input.closeSync();
+        final f = await file.open();
+        try {
+          pages = (await ZipIndex.read(f)).entries.where((e) => isPageName(e.name)).length;
+        } finally {
+          await f.close();
+        }
+      } catch (_) {
+        final input = InputFileStream(path);
+        try {
+          final arc = ZipDecoder().decodeStream(input);
+          pages = arc.files.where((f) => f.isFile && isPageName(f.name)).length;
+        } finally {
+          input.closeSync();
+        }
       }
     } else {
       if (sevenZip == null) {
@@ -180,9 +190,13 @@ abstract class Book {
     }
     if (kind == 'zip') {
       try {
-        return ZipBook(path);
+        return await FastZipBook.open(path);
       } catch (_) {
-        if (sevenZip == null) rethrow;
+        try {
+          return ZipBook(path);
+        } catch (_) {
+          if (sevenZip == null) rethrow;
+        }
       }
     }
     if (sevenZip == null) {
@@ -200,6 +214,37 @@ Future<Uint8List?> readOnePage(String path, int index, {String? sevenZip, requir
     return await book.page(index.clamp(0, book.length - 1));
   } finally {
     book.close();
+  }
+}
+
+/// CBZ through the async reader in zip.dart.
+class FastZipBook extends Book {
+  FastZipBook._(this._r, this._entries, this._names);
+  final ZipReader _r;
+  final Map<String, ZipEntry> _entries;
+  final List<String> _names;
+
+  static Future<FastZipBook> open(String path) async {
+    final r = await ZipReader.open(path);
+    final entries = {for (final e in r.index.entries) e.name: e};
+    final names = sortPages(entries.keys);
+    // Pages compressed in some rarer way go to the fallback reader.
+    if (names.any((n) => entries[n]!.method != 0 && entries[n]!.method != 8)) {
+      await r.close();
+      throw UnsupportedError('compression');
+    }
+    return FastZipBook._(r, entries, names);
+  }
+
+  @override
+  List<String> get pageNames => _names;
+
+  @override
+  Future<Uint8List> page(int i) => _r.read(_entries[_names[i]]!);
+
+  @override
+  void close() {
+    _r.close();
   }
 }
 

@@ -1,3 +1,4 @@
+import 'dart:io';
 // ignore_for_file: deprecated_member_use
 import 'dart:async';
 import 'dart:math';
@@ -19,6 +20,8 @@ import '../core/savepage.dart';
 import '../core/settings.dart';
 import 'covers.dart';
 import 'library_page.dart';
+import 'info_panel.dart';
+import 'look.dart';
 import 'widgets.dart';
 
 /// One piece of a view: a page, or one half of a split spread.
@@ -92,6 +95,7 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
 
   // UI
   bool ui_ = false;
+  bool detailsOpen = false;
   bool _overControls = false;
   bool _cursorHidden = false;
   Timer? _hideTimer;
@@ -168,14 +172,13 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
     }
     final r = await PageSaver.save(title: t, parts: pp);
     if (r is SaveFailed) AppLog.I.warn(r.message);
-    savedHashes = Db.I.savedHashes();
+    savedHashes = Db.I.savedHashes(titleId: t.id);
   }
 
   @override
   void initState() {
     super.initState();
     ReaderControl.active = this;
-    savedHashes = Db.I.savedHashes();
     _openTitle(widget.title, widget.startPage);
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       if (DateTime.now().difference(lastInput).inMinutes < Settings.I.idleMinutes) activeSeconds++;
@@ -203,6 +206,7 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
 
   Future<void> _openTitle(Title title, int? startPage) async {
     t = title;
+    savedHashes = Db.I.savedHashes(titleId: t.id);
     _loaderGen++;
     book?.close();
     book = null;
@@ -755,13 +759,34 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
       }
       pp.add(PagePart(x.page, b, p.extension(book!.pageNames[x.page]), half: x.half));
     }
-    final r = await PageSaver.save(title: t, parts: pp);
+    var r = await PageSaver.save(title: t, parts: pp);
+    final dup = r;
+    if (dup is AlreadySaved && mounted) {
+      final moved = !File(dup.path).existsSync();
+      final again = await showDialog<bool>(
+        context: context,
+        builder: (c) => AppDialog(
+          title: 'This would be a duplicate',
+          body: Text(
+              'You saved this page from this chapter on ${dateText(dup.at)}'
+              '${moved ? ' (the file has since been moved)' : ' as ${p.basename(dup.path)}'}. '
+              'Saving it again makes a second copy with a new name. Nothing is overwritten.',
+              style: ts(c: tk.sec)),
+          actions: [
+            Btn.primary('Cancel', onTap: () => Navigator.pop(c, false)),
+            Btn('Save anyway', onTap: () => Navigator.pop(c, true)),
+          ],
+        ),
+      );
+      if (again != true) return;
+      r = await PageSaver.save(title: t, parts: pp, force: true);
+    }
     switch (r) {
       case Saved(:final path):
-        savedHashes = Db.I.savedHashes();
+        savedHashes = Db.I.savedHashes(titleId: t.id);
         toast('Saved ${p.basename(path)}');
-      case AlreadySaved(:final at):
-        toast('Already saved on ${dateText(at)}, so it wasn\'t saved again', ToastKind.info);
+      case AlreadySaved():
+        break;
       case SaveFailed(:final message):
         toast(message, ToastKind.error);
     }
@@ -783,7 +808,9 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
     final rtl = direction == ReadDirection.rtl;
     _input();
     if (k == LogicalKeyboardKey.escape) {
-      if (showStrip) {
+      if (detailsOpen) {
+        setState(() => detailsOpen = false);
+      } else if (showStrip) {
         setState(() => showStrip = false);
       } else if (zoom != 1) {
         setState(() {
@@ -827,6 +854,8 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
     } else if (k == LogicalKeyboardKey.digit1) {
       _actualSize();
     } else if (k == LogicalKeyboardKey.keyD) {
+      setState(() => detailsOpen = !detailsOpen);
+    } else if (k == LogicalKeyboardKey.keyT) {
       _toggleDouble();
     } else if (k == LogicalKeyboardKey.keyO) {
       _toggleCoverOffset();
@@ -921,6 +950,10 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
   Widget _pageWidget(Part x, double height) {
     final im = images[x.page];
     final w = height * _aspect(x);
+    if (im == null && x.page == t.coverPage && x.half == 0 && !failed.contains(x.page) && Thumbs.I.cached(t) != null) {
+      // While the full page decodes, its cover thumbnail stands in.
+      return SizedBox(width: w, height: height, child: CoverThumb(title: t));
+    }
     if (im == null) {
       return Container(
         width: w,
@@ -964,11 +997,21 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
               WidgetsBinding.instance.addPostFrameCallback((_) => _relayout());
             }
           }
+          // The controls have their own size setting (Look → Sizes), on top of the window's.
+          final controlsScale = Look.I.readerScale / Look.I.uiScale;
           return Stack(children: [
             Positioned.fill(child: _content()),
-            if (Settings.I.pageNumbers && n > 0 && !ui_) Positioned(right: 14, bottom: 10, child: _pageNumber()),
-            if (ui_) ..._overlay(),
-            if (showStrip) Positioned(left: 0, right: 0, bottom: ui_ ? 64 : 0, child: _hoverKeep(_pageStrip())),
+            Positioned.fill(
+              child: UiScale(
+                scale: controlsScale,
+                child: Stack(children: [
+                  if (Settings.I.pageNumbers && n > 0 && !ui_) Positioned(right: 14, bottom: 10, child: _pageNumber()),
+                  if (ui_) ..._overlay(),
+                  if (showStrip) Positioned(left: 0, right: 0, bottom: ui_ ? 64 : 0, child: _hoverKeep(_pageStrip())),
+                  if (detailsOpen) Positioned(top: ui_ ? 46 : 0, right: 0, bottom: ui_ ? 64 : 0, child: _hoverKeep(_details())),
+                ]),
+              ),
+            ),
             const ToastLayer(),
           ]);
         }),
@@ -1004,7 +1047,21 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
         ]),
       );
     }
-    if (book == null) return Center(child: SizedBox(width: 200, child: Progress(value: null, height: 4)));
+    if (book == null) {
+      // Shown straight away while the file opens: the cover and the title.
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          SizedBox(
+            height: min(viewport.height * 0.6, 520),
+            child: AspectRatio(aspectRatio: 1 / 1.42, child: CoverThumb(title: t)),
+          ),
+          const SizedBox(height: 16),
+          Text(t.displayTitle, style: ts(c: tk.sec)),
+          const SizedBox(height: 10),
+          SizedBox(width: 200, child: Progress(value: null, height: 4)),
+        ]),
+      );
+    }
     if (stripMode) return _stripView();
     if (pos >= views.length) return _endScreen();
     final v = views[pos];
@@ -1175,6 +1232,21 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
     );
   }
 
+  Widget _details() => InfoPanel(
+        key: ValueKey('reader-details-${t.id}'),
+        entry: TitleEntry(t),
+        width: 340,
+        onClose: () => setState(() => detailsOpen = false),
+        onRead: (x, page) {
+          if (x.id != t.id) {
+            _endSession();
+            _openTitle(x, page);
+          } else if (page != null) {
+            _goToPage(page);
+          }
+        },
+      );
+
   /// While the pointer is over a control bar, the controls stay up.
   Widget _hoverKeep(Widget child) => MouseRegion(
         onEnter: (_) => _overControls = true,
@@ -1282,6 +1354,8 @@ class _ReaderPageState extends State<ReaderPage> implements ReaderControl {
               Library.I.toggleFavourite([t]);
               setState(() {});
             }),
+            IconBtn(Icons.info_outline, tooltip: 'Details (D)', active: detailsOpen,
+                onTap: () => setState(() => detailsOpen = !detailsOpen)),
             IconBtn(_fullScreen ? Icons.fullscreen_exit : Icons.fullscreen, tooltip: 'Full screen (F)', onTap: _toggleFullScreen),
           ]),
         ),

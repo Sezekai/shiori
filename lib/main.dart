@@ -334,6 +334,11 @@ Future<void> _runSelftest() async {
     LibraryPageState.active?.selectFirst();
     await Future<void>.delayed(const Duration(milliseconds: 800));
     await _screenshot('library-panel');
+    LibraryPageState.active?.openFirstSeries();
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    await _screenshot('series');
+    LibraryPageState.active?.closeOpen();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     final ctx = navKey.currentContext;
     if (ctx != null && titles.isNotEmpty) {
       final first = Library.I.seriesGroups(Section.manga).values.first.first;

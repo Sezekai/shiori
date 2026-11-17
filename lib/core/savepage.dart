@@ -37,9 +37,11 @@ class Saved extends SaveResult {
   final String path;
 }
 
+/// This chapter's same image was saved before. Ask, then save with force.
 class AlreadySaved extends SaveResult {
-  AlreadySaved(this.at);
+  AlreadySaved(this.at, this.path);
   final int at;
+  final String path;
 }
 
 class SaveFailed extends SaveResult {
@@ -47,18 +49,21 @@ class SaveFailed extends SaveResult {
   final String message;
 }
 
-/// Saves pages to the section's save folder. Never overwrites, and never
-/// saves the same image twice, even after the saved files are moved away.
+/// Saves pages to the section's save folder. Never overwrites a file. Saving
+/// the same image from the same chapter again (even after the saved file was
+/// moved) returns [AlreadySaved] unless [force] is set; then it's saved under
+/// a new name. The same image in a different chapter saves normally.
 class PageSaver {
   static Future<SaveResult> save({
     required Title title,
     required List<PagePart> parts, // in the order they're shown, left to right
+    bool force = false,
   }) async {
     final s = Settings.I;
     final ss = s.of(title.section);
     final hash = parts.length == 1 ? partHash(parts.first) : combinedHash(parts);
-    final existing = Db.I.savedByHash(hash);
-    if (existing != null) return AlreadySaved(existing.at);
+    final existing = Db.I.savedByHash(hash, titleId: title.id);
+    if (existing != null && !force) return AlreadySaved(existing.at, existing.path);
 
     final folder = ss.saveFolder;
     if (folder.isEmpty) return SaveFailed('Choose a save folder for ${title.section.label} in Settings first.');
@@ -86,8 +91,10 @@ class PageSaver {
       SaveFormat.jpg => '.jpg',
       SaveFormat.png => '.png',
     };
-    final base = safeFileName('${title.displayTitle} - $pageLabel$halfLabel');
-    final target = uniquePath(p.join(folder, '$base$ext'));
+    // The chapter goes in the name so chapters of one series never share names.
+    final ch = title.displayChapter;
+    final chLabel = ch == null || RegExp('(^|\\D)${RegExp.escape(_num(ch))}(\\D|\$)').hasMatch(title.displayTitle) ? '' : ' ch${_num(ch)}';
+    final base = safeFileName('${title.displayTitle}$chLabel - $pageLabel$halfLabel');
 
     try {
       Uint8List out;
@@ -99,7 +106,7 @@ class PageSaver {
         final inputs = parts.map((x) => (x.bytes, x.half)).toList();
         out = await Isolate.run(() => _encode(inputs, png, quality));
       }
-      await File(target).writeAsBytes(out, flush: true);
+      final target = await _writeNew(p.join(folder, '$base$ext'), out);
       Db.I.addSaved(title.id, pagesSorted.map((x) => x + 1).join('-'), hash, target, format.name);
       AppLog.I.info('Saved $target');
       return Saved(target);
@@ -107,6 +114,27 @@ class PageSaver {
       AppLog.I.error('Couldn\'t save the page', e);
       return SaveFailed('Couldn\'t save the page: $e');
     }
+  }
+
+  static String _num(double d) => d == d.roundToDouble() ? d.toInt().toString() : d.toString();
+
+  /// Writes to [path], or "name (2)", "name (3)"… if taken. The file is
+  /// created exclusively, so an existing file is never replaced.
+  static Future<String> _writeNew(String path, Uint8List bytes) async {
+    final dir = p.dirname(path), name = p.basenameWithoutExtension(path), ext = p.extension(path);
+    for (var i = 1; i < 10000; i++) {
+      final candidate = i == 1 ? path : p.join(dir, '$name ($i)$ext');
+      if (File(candidate).existsSync()) continue;
+      final f = File(candidate);
+      try {
+        await f.create(exclusive: true);
+      } on FileSystemException {
+        continue; // someone took it a moment ago
+      }
+      await f.writeAsBytes(bytes, flush: true);
+      return candidate;
+    }
+    throw Exception('no free file name for $path');
   }
 
   static Uint8List _encode(List<(Uint8List, int)> inputs, bool png, int quality) {

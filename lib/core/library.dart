@@ -808,7 +808,7 @@ Future<List<(String, int, int)>> _listInBackground(String root, Set<String> excl
     Isolate.run(() => Library._listBooks(root, excluded));
 
 Future<List<FileInfo>> _inspectInBackground(List<String> paths, String? sevenZip) =>
-    Isolate.run(() => [for (final x in paths) inspectFile(x, sevenZip)]);
+    Isolate.run(() async => [for (final x in paths) await inspectFile(x, sevenZip)]);
 
 /// Cover thumbnails, cached on disk (Cache\thumbs).
 ///

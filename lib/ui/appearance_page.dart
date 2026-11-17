@@ -47,7 +47,7 @@ class _AppearancePageState extends State<AppearancePage> {
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               SizedBox(width: 292, child: _themes()),
               const SizedBox(width: 8),
-              Expanded(child: ListView(children: [_preview(), _background(), _accent(), _font(), _shape()])),
+              Expanded(child: ListView(children: [_preview(), _sizes(), _background(), _accent(), _font(), _shape()])),
             ]),
           ),
         ]),
@@ -354,6 +354,61 @@ class _AppearancePageState extends State<AppearancePage> {
           Builder(builder: (_) {
             final c = l.accent.map((a) => contrast(a, l.onAcc)).reduce((a, b) => a < b ? a : b);
             return Text('Contrast ${c.toStringAsFixed(1)}', style: ts(c: c < 4.5 ? tk.warn : tk.faint, size: 12));
+          }),
+        ]),
+      ]);
+
+  Widget _scaleRow(String label, String hint, double value, double lo, double hi, ValueChanged<double> on) => Row(children: [
+        SizedBox(width: 150, child: Text(label, style: ts(c: tk.sec))),
+        SizedBox(
+          width: 280,
+          child: Slider(
+            value: value.clamp(lo, hi),
+            min: lo,
+            max: hi,
+            divisions: ((hi - lo) / 0.05).round(),
+            onChanged: (v) {
+              on((v * 20).round() / 20);
+              setState(() {});
+            },
+            onChangeEnd: (_) => _changed(),
+          ),
+        ),
+        SizedBox(width: 56, child: Text('${(value * 100).round()}%', style: ts(tab: true, w: FontWeight.w600))),
+        Expanded(child: Text(hint, style: ts(c: tk.faint, size: 12))),
+      ]);
+
+  Widget _sizes() => _section('Sizes', [
+        _scaleRow('Main window', 'Everything in the window: text, icons, buttons, lists and dialogs.', l.uiScale, 0.8, 1.6,
+            (v) => l.uiScale = v),
+        _scaleRow('Reader controls', 'The bars, buttons and page number in the reader. Pages aren\'t affected.',
+            l.readerScale, 0.8, 2.0, (v) => l.readerScale = v),
+        Row(children: [
+          SizedBox(width: 150, child: Text('Cover corners', style: ts(c: tk.sec))),
+          SizedBox(
+            width: 280,
+            child: Slider(
+              value: l.coverRadius.clamp(0, 24),
+              min: 0,
+              max: 24,
+              divisions: 24,
+              onChanged: (v) {
+                l.coverRadius = v;
+                setState(() {});
+              },
+              onChangeEnd: (_) => _changed(),
+            ),
+          ),
+          SizedBox(width: 56, child: Text('${l.coverRadius.round()} px', style: ts(tab: true, w: FontWeight.w600))),
+          Expanded(child: Text('Rounding on covers in the grid, panels and lists.', style: ts(c: tk.faint, size: 12))),
+        ]),
+        const SizedBox(height: 4),
+        Row(children: [
+          Btn('Reset sizes', onTap: () {
+            l.uiScale = 1;
+            l.readerScale = 1;
+            l.coverRadius = 6;
+            _changed();
           }),
         ]),
       ]);

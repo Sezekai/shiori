@@ -128,7 +128,7 @@ class ShioriApp extends StatelessWidget {
         // AccessibilityBridge::CreateRemoveReparentedNodesUpdate) when a
         // Windows tool turns it on and the grid's layout changes quickly.
         // Shiori doesn't expose its controls to that bridge, so it stays off.
-        builder: (context, child) => ExcludeSemantics(child: child ?? const SizedBox()),
+        builder: (context, child) => UiScale(scale: Look.I.uiScale, child: ExcludeSemantics(child: child ?? const SizedBox())),
         home: home ?? const Shell(),
       ),
     );
@@ -696,15 +696,26 @@ const keyGroups = <(String, List<(String, String)>)>[
     ('Mouse back', 'Go back: close panels, up a folder, previous screen'),
   ]),
   ('Library', [
-    ('Click', 'Show its details on the right'),
-    ('Click again', 'Read or continue'),
-    ('Right-click', 'More: adjust the cover, cover page…'),
+    ('Click', 'Open: a single title reads, a series opens its page'),
+    ('Arrows, PgUp PgDn', 'Move the highlight'),
+    ('Enter', 'Open the highlighted title'),
+    ('Space', 'Show its details on the right'),
+    ('D', 'Show or hide the details panel'),
+    ('Middle-click', 'Show that title\'s details'),
+    ('Right-click', 'More: details, adjust the cover, cover page…'),
     ('Ctrl+click', 'Tick'),
     ('Shift+click', 'Tick a range'),
     ('Ctrl+A', 'Tick everything shown'),
     ('R', 'Random title'),
     ('+ −, Ctrl+wheel', 'Bigger or smaller covers'),
     ('Backspace', 'Up one folder (comics)'),
+  ]),
+  ('Series page, history, saved pages', [
+    ('Arrows', 'Move the highlight'),
+    ('Enter', 'Open'),
+    ('Space', 'Chapter details on the left; saved page preview'),
+    ('Middle-click', 'Chapter details on the left'),
+    ('Delete', 'Forget a saved page'),
   ]),
   ('Reader', [
     ('← →', 'Previous / next, following the reading direction'),
@@ -714,7 +725,8 @@ const keyGroups = <(String, List<(String, String)>)>[
     ('Home End', 'First / last page'),
     ('↑ ↓', 'Zoom (scroll in strip mode)'),
     ('0, 1', 'Fit; actual size'),
-    ('D', 'Single or two pages'),
+    ('T', 'Single or two pages'),
+    ('D', 'Details'),
     ('O', 'Offset the cover'),
     ('C', 'Crop borders'),
     ('P', 'Save page'),
@@ -724,7 +736,8 @@ const keyGroups = <(String, List<(String, String)>)>[
     ('Esc', 'Close the reader'),
   ]),
   ('Dialogs', [
-    ('Enter', 'Confirm'),
+    ('← →, Tab', 'Move between the buttons'),
+    ('Enter', 'Press the highlighted button'),
     ('Esc', 'Cancel'),
   ]),
 ];

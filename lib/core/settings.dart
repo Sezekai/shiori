@@ -170,6 +170,14 @@ class Settings extends ChangeNotifier {
   String clickAction = 'select'; // select | tick
   Map<String, dynamic> windowState = {};
   double sidePanelWidth = 292;
+  /// Remembered sizes: list columns ("table.column") and panels.
+  Map<String, double> widths = {};
+
+  double width(String key, double fallback) => widths[key] ?? fallback;
+  void setWidth(String key, double v) {
+    widths[key] = v;
+    changedQuiet();
+  }
 
   SectionSettings of(Section s) => sections[s]!;
 
@@ -198,6 +206,7 @@ class Settings extends ChangeNotifier {
       clickAction = m['clickAction'] as String? ?? 'select';
       windowState = (m['window'] as Map?)?.cast<String, dynamic>() ?? {};
       sidePanelWidth = (m['sidePanelWidth'] as num?)?.toDouble() ?? 292;
+      widths = ((m['widths'] as Map?) ?? {}).map((k, v) => MapEntry(k as String, (v as num).toDouble()));
     } catch (_) {}
   }
 
@@ -215,6 +224,7 @@ class Settings extends ChangeNotifier {
         'clickAction': clickAction,
         'window': windowState,
         'sidePanelWidth': sidePanelWidth,
+        'widths': widths,
       };
 
   /// Changes apply straight away; there's no Save button.
