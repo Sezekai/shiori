@@ -12,8 +12,8 @@ One owner, reading a large personal collection on a Windows laptop (and later an
 
 ## Stages
 
-1. **This release:** the complete PC app.
-2. **Next:** the Android companion (Flutter, same codebase): a PC server on home WiFi with discovery and pairing, streaming, offline downloads (CBR repacked as CBZ), offline browsing with every cover, two-way sync of reading data, save-page requests sent to the PC, foldable layouts, and app lock. Reading away from home (Tailscale) is out of scope for now.
+1. **Done:** the complete PC app.
+2. **Done (1.3.0):** the Android companion (Flutter, same codebase): a PC server on home WiFi with discovery and pairing, streaming, offline downloads (CBR repacked as CBZ), offline browsing with every cover, two-way sync of reading data, save-page requests sent to the PC, foldable layouts, and app lock. Reading away from home (Tailscale) is out of scope for now.
 
 ## Decisions for this app (STANDARDS.md "App chooses" and "When relevant")
 

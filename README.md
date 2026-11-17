@@ -2,7 +2,7 @@
 
 A library and reader for large collections of manga, comics and art books in CBZ and CBR files. It mixes the library, history and stats of Mihon/Tachiyomi with YACReader's local-folder reading.
 
-This is stage 1: the complete Windows app. Stage 2 adds the Android companion that reads from this PC over home WiFi.
+There's a Windows app and an Android companion. The phone reads your library from the PC over your home WiFi, downloads titles to read anywhere, and sends your reading back to the PC.
 
 ## Install and update
 
@@ -11,6 +11,15 @@ This is stage 1: the complete Windows app. Stage 2 adds the Android companion th
 3. Run `Shiori.exe`. No installer and no admin rights are needed.
 
 **Updating:** replace the `App` folder with the new one. Your library, history, settings and covers are kept, because they live outside it.
+
+### On the phone
+
+1. On the PC: Settings → Phone → tick **Let the phone app connect**. Windows may ask once to let Shiori through the firewall: allow it on private networks.
+2. Download `Shiori-vX.Y.Z-android.apk` from the same release on the phone and open it. Android asks to allow installs from your browser the first time.
+3. Open Shiori on the phone. It finds the PC on the WiFi. Press **Pair a phone** on the PC and type the 6-digit code on the phone.
+4. The first sync brings over the library, history and every cover, with a progress bar.
+
+**Updating:** install the new APK over the old one. Everything on the phone is kept.
 
 ## Where things live
 
@@ -55,6 +64,17 @@ Settings → Storage shows each place with its size, and can open, move or clear
 - Every page of the open file loads in the background, nearest pages first.
 - **Save page (P):** saved in the original format, JPG (with a quality setting) or PNG. With two pages showing, choose left, right, or both combined into one image. Shiori never overwrites a file, and never saves the same image twice, even after you move the saved images away. The Saved pages screen lists every save, with "Forget this save".
 - **End of file:** a short screen with rating, favourite and tags, then **Next** (the next chapter, or the next title in the list you came from; in Comics, the folder order). An option skips chapters already read.
+
+### Phone
+
+- **Same library:** the three sections, series, comics folder view, search, filters (plus Downloaded), sorts, random, favourites, half-star ratings, tags, mark read/unread. Long-press to tick several.
+- **Streaming:** opening a title on the WiFi starts loading all its pages in the background, nearest first, with a thin line showing how much has arrived. The last 6 files stay on the phone for quick re-opening.
+- **Downloads:** whole files, CBR repacked as CBZ by the PC (images untouched). Progress bar, %, size, speed, time taken and time left. On phone storage or the SD card. Removing a download never touches the PC.
+- **Offline:** the library, covers, history and stats are always on the phone. Downloads read with no connection. Everything you read offline is sent to the PC when you're back on the WiFi; sessions and finishes are only ever added, so nothing is lost.
+- **Reader:** right-to-left, left-to-right and downward (page by page or a continuous strip), tap zones, swipe, volume keys, pinch and double-tap zoom, page slider, two pages side by side when the phone is unfolded, cover on its own, split wide pages, page numbers, next chapter.
+- **Saving pages:** the bookmark button asks the PC to save the page from its own file, so it's always full quality. Offline, it waits in **More → Waiting to save**. Duplicates from the same chapter ask first, like on the PC.
+- **App lock:** fingerprint, face or PIN using the phone's own lock, after a chosen time away. Optionally hides Shiori in recent apps.
+- **Storage:** More → Storage shows what covers, downloads, recent pages and library data use.
 
 ### History and stats
 - Every session: start, end, active reading time (idle time isn't counted), pages from and to, and pages seen.
@@ -104,7 +124,11 @@ Press **K** in the app for the full list.
 
 - Flutter (Dart) for Windows now and Android in stage 2, sharing one codebase.
 - `lib/core/`: database (SQLite), file-name parsing, archives (CBZ via `archive`, CBR via the bundled 7-Zip), scanning, jobs and progress, saving pages, YACReader import.
+- `lib/core/server.dart`: the phone server on the PC (HTTP on port 47811, discovery on UDP 47812, pairing tokens, snapshot, covers, pages, downloads, sync, saving).
+- `lib/mobile/`: the Android app. It shares `lib/core` (the same database tables, parsing and library logic) and talks to the PC through `pc.dart`.
 - `lib/ui/`: the shell (title bar, rail, status bar, log, keys popup), library, title page, reader, history, stats, settings and appearance.
 - `flutter test` runs the unit tests (file-name parsing, archives, cover queue).
 - `Shiori.exe --selftest` (CI runs it on the built app) makes sample books, scans them, makes covers, opens the reader, and takes screenshots of each screen into the data folder's `logs\`. Use `SHIORI_ROOT` and `SHIORI_DATA` to point it at test folders.
-- GitHub Actions builds on every push to `main`. It runs the tests, builds the app, bundles 7-Zip, runs the self-test, and publishes a release named after the version in `pubspec.yaml`. Raise the version for every release.
+- The PC self-test also checks the phone server. With `SHIORI_STAY_FOR_PHONE=<file>` it keeps serving; then run the build with `SHIORI_MOBILE=1 SHIORI_SELFTEST=1 SHIORI_PC_FILE=<file>` to run the phone app in a phone-sized window against it (pair, sync, read, save, download, offline, reconnect) with screenshots.
+- GitHub Actions builds on every push to `main`: the Windows app (tests, 7-Zip, self-test) and the Android APK, and publishes both in a release named after the version in `pubspec.yaml`. Raise the version for every release.
+- The APK is signed with the key in the `ANDROID_KEYSTORE` (base64 of the .jks) and `ANDROID_KEYSTORE_PASSWORD` secrets, so each version installs over the last.

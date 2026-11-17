@@ -1,6 +1,7 @@
 import 'dart:io';
 
-import 'package:local_auth/local_auth.dart';
+import 'package:local_auth_android/local_auth_android.dart';
+import 'package:local_auth_platform_interface/local_auth_platform_interface.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/settings.dart';
@@ -19,7 +20,11 @@ class AppLock extends StatefulWidget {
   static Future<bool> check(String reason) async {
     if (!Platform.isAndroid) return true;
     try {
-      return await LocalAuthentication().authenticate(localizedReason: reason, persistAcrossBackgrounding: true);
+      return await LocalAuthPlatform.instance.authenticate(
+        localizedReason: reason,
+        authMessages: const [AndroidAuthMessages(signInTitle: 'Shiori')],
+        options: const AuthenticationOptions(stickyAuth: true, useErrorDialogs: false),
+      );
     } catch (_) {
       return false;
     }
@@ -28,7 +33,7 @@ class AppLock extends StatefulWidget {
   static Future<bool> available() async {
     if (!Platform.isAndroid) return false;
     try {
-      return await LocalAuthentication().isDeviceSupported();
+      return await LocalAuthPlatform.instance.isDeviceSupported();
     } catch (_) {
       return false;
     }

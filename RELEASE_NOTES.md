@@ -1,28 +1,22 @@
-# Shiori 1.2.0
+# Shiori 1.3.0: the phone app
 
-## Library
-- **One click opens.** A single chapter, art book or one-chapter manga opens in the reader on the first click. A series opens its page.
-- **Details panel on demand.** Press **D** (or the Details button) to show or hide it. Middle-click any title to show its details there. Drag its edge to resize it; the width is remembered.
-- **Keyboard browsing.** Arrow keys and PgUp/PgDn move a highlight, **Enter** opens, **Space** shows the highlighted title's details (and the panel follows the highlight while it's open).
-- **Ticks only when you want them.** Checkboxes are hidden until you press **Select**, or Ctrl+click (one) / Shift+click (a range).
-- **List view:** drag column edges to resize them (remembered), alternating row shades, and the columns stay together on a maximised window instead of spreading out.
+This release adds **Shiori for Android** (`Shiori-v1.3.0-android.apk`) alongside the Windows app.
 
-## Series page
-- Details, rating, tags and buttons moved into a left column under the cover. Drag its edge to resize it.
-- Chapters as a **list with thumbnails** or a **grid**, with a size slider. Click a chapter to read it. Middle-click or Space shows its details on the left.
-- Select button, Ctrl/Shift-click ticking, and keyboard browsing like the library.
+## Setting it up
+1. On the PC: Settings → **Phone** → tick **Let the phone app connect**. Windows may ask to let Shiori through the firewall: allow it on private networks.
+2. Install the APK on the phone and open it. It finds the PC on your WiFi.
+3. Press **Pair a phone** on the PC and type the 6-digit code on the phone. The first sync brings over the library, history and every cover.
 
-## Reader
-- Opens straight away with a loading view, and shows the first pages before the rest are ready (big art books felt slow).
-- **D** or the new info button shows the details panel.
+## On the phone
+- The same three sections, series, comics folders, search, filters and sorts, ratings, favourites, tags, mark read, long-press to tick several.
+- **Read from the PC over WiFi.** All of a title's pages load in the background as soon as you open it, nearest first.
+- **Downloads** to read anywhere, with a progress bar, %, speed, time taken and time left. CBR files are repacked as CBZ by the PC; your files aren't changed. Phone storage or SD card.
+- **Offline:** the library, covers, history and stats are always on the phone. Reading done offline goes to the PC when you're back on the WiFi.
+- **Reader:** all three directions plus a continuous strip, tap zones, swipe, volume keys, pinch and double-tap zoom, two pages side by side when unfolded, split wide pages, next chapter.
+- **Save page** saves on the PC from the original file, or waits until you're connected. Duplicates from the same chapter ask first.
+- **App lock** with fingerprint, face or PIN, and an option to hide Shiori in recent apps.
+- **Storage** page showing what covers, downloads and data use.
 
-## Saved pages
-- New **masonry grid** of the saved images (size slider, Ctrl+wheel), plus the list. Click to preview, Enter opens the chapter at that page.
-- **Nothing is ever overwritten.** Chapter numbers are part of the file name, and files are created so an existing one can never be replaced.
-- Saving a page you've already saved **from the same chapter** (even if you moved the file) now asks: Cancel, or Save anyway (saved as a new copy). The same image in a different chapter saves normally.
-
-## Everywhere
-- Dialogs: the first button is highlighted, arrow keys move between buttons, Enter presses, Esc closes.
-- History, Artists and Saved pages lists: resizable columns, alternating rows, keyboard browsing.
-- **Sizes** in Appearance: scale the main window and the reader controls separately. The cover corner setting moved there too.
-- Column widths, panel widths and thumbnail sizes are remembered.
+## On the PC
+- Settings → Phone: switch the connection on, pair phones, see which are connected, remove them, and an option to shrink very large pages when streaming.
+- Reading from the phone shows in History marked "Phone", and counts in the stats.
